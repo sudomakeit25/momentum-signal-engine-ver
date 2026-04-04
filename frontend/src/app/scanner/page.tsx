@@ -149,10 +149,22 @@ export default function ScannerPage() {
       )}
 
       {isLoading && !data ? (
-        <div className="space-y-2">
-          {Array.from({ length: 10 }).map((_, i) => (
-            <Skeleton key={i} className="h-12 w-full bg-zinc-800" />
-          ))}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <svg className="h-5 w-5 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-zinc-200">Scanning 150+ stocks for momentum setups...</p>
+              <p className="text-xs text-zinc-500">This may take a few seconds on first load</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full bg-zinc-800" />
+            ))}
+          </div>
         </div>
       ) : data && data.length > 0 ? (
         <ScannerTable results={data} isWatched={isWatched} onToggleWatch={toggle} />
