@@ -22,7 +22,6 @@ import {
   Wallet,
   Bell,
   History,
-  Grid3x3,
   ShieldAlert,
   Calendar,
   Send,
@@ -42,34 +41,63 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
-  { href: "/scanner", label: "Scanner", icon: ScanSearch },
-  { href: "/watchlist", label: "Watchlist", icon: Eye },
-  { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
-  { href: "/portfolio", label: "Portfolio", icon: Wallet },
-  { href: "/alerts", label: "Price Alerts", icon: Bell },
-  { href: "/signals-history", label: "Signal History", icon: History },
-  { href: "/performance", label: "Performance", icon: BarChart2 },
-  { href: "/position-sizer", label: "Position Sizer", icon: Calculator },
-  { href: "/backtest", label: "Backtest", icon: BarChart3 },
-  { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
-  { href: "/sectors", label: "Sectors", icon: TrendingUp },
-  { href: "/correlation", label: "Correlation", icon: Grid3x3 },
-  { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
-  { href: "/market-regime", label: "Market Regime", icon: Gauge },
-  { href: "/smart-money", label: "Smart Money", icon: Target },
-  { href: "/news", label: "News Sentiment", icon: Newspaper },
-  { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
-  { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
-  { href: "/options-flow", label: "Options Flow", icon: Activity },
-  { href: "/dark-pool", label: "Dark Pool", icon: Layers },
-  { href: "/earnings", label: "Earnings", icon: Calendar },
-  { href: "/journal", label: "Trade Journal", icon: BookMarked },
-  { href: "/alert-history", label: "Alert History", icon: ClipboardList },
-  { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
-  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
-  { href: "/notifications", label: "Notifications", icon: Send },
-  { href: "/guide", label: "Guide", icon: BookOpen },
+interface NavSection {
+  label: string;
+  items: { href: string; label: string; icon: typeof ScanSearch }[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "Trade",
+    items: [
+      { href: "/scanner", label: "Scanner", icon: ScanSearch },
+      { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
+      { href: "/watchlist", label: "Watchlist", icon: Eye },
+      { href: "/portfolio", label: "Portfolio", icon: Wallet },
+      { href: "/position-sizer", label: "Position Sizer", icon: Calculator },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { href: "/smart-money", label: "Smart Money", icon: Target },
+      { href: "/market-regime", label: "Market Regime", icon: Gauge },
+      { href: "/dark-pool", label: "Dark Pool", icon: Layers },
+      { href: "/options-flow", label: "Options Flow", icon: Activity },
+      { href: "/earnings", label: "Earnings", icon: Calendar },
+      { href: "/news", label: "News Sentiment", icon: Newspaper },
+    ],
+  },
+  {
+    label: "Analysis",
+    items: [
+      { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
+      { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
+      { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
+      { href: "/sectors", label: "Sectors", icon: TrendingUp },
+      { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
+    ],
+  },
+  {
+    label: "History",
+    items: [
+      { href: "/journal", label: "Trade Journal", icon: BookMarked },
+      { href: "/signals-history", label: "Signal History", icon: History },
+      { href: "/alert-history", label: "Alert History", icon: ClipboardList },
+      { href: "/performance", label: "Performance", icon: BarChart2 },
+      { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { href: "/backtest", label: "Backtest", icon: BarChart3 },
+      { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
+      { href: "/alerts", label: "Price Alerts", icon: Bell },
+      { href: "/notifications", label: "Notifications", icon: Send },
+      { href: "/guide", label: "Guide", icon: BookOpen },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -114,27 +142,36 @@ export function Sidebar() {
           </span>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {NAV_ITEMS.map((item) => {
-            const isActive =
-              pathname === item.href || pathname.startsWith(item.href.split("/").slice(0, 2).join("/"));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "border-l-2 border-cyan-400 bg-zinc-800/50 text-cyan-400"
-                    : "text-zinc-400 hover:bg-zinc-800/30 hover:text-zinc-200"
-                )}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 overflow-y-auto p-3">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.label} className="mb-3">
+              <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-600">
+                {section.label}
+              </p>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const isActive =
+                    pathname === item.href || pathname.startsWith(item.href.split("/").slice(0, 2).join("/"));
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                        isActive
+                          ? "border-l-2 border-cyan-400 bg-zinc-800/50 text-cyan-400"
+                          : "text-zinc-400 hover:bg-zinc-800/30 hover:text-zinc-200"
+                      )}
+                    >
+                      <item.icon className="h-3.5 w-3.5" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         <div className="space-y-3 border-t border-border p-4">
