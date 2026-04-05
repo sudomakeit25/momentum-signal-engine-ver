@@ -44,6 +44,7 @@ const NAV_ITEMS = [
   { href: "/sectors", label: "Sectors", icon: TrendingUp },
   { href: "/correlation", label: "Correlation", icon: Grid3x3 },
   { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
+  { href: "/options-flow", label: "Options Flow", icon: Activity },
   { href: "/dark-pool", label: "Dark Pool", icon: Layers },
   { href: "/earnings", label: "Earnings", icon: Calendar },
   { href: "/notifications", label: "Notifications", icon: Send },

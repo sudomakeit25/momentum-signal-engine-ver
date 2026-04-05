@@ -840,3 +840,49 @@ def insider_trades(
         except Exception:
             continue
     return results
+
+
+# --- Options Flow Endpoints ---
+
+from src.data.models import OptionsFlowResult
+from src.scanner.options_flow import (
+    analyze_symbol as of_analyze,
+    screen_universe as of_screen,
+)
+
+
+@router.get("/options-flow/scan", response_model=list[OptionsFlowResult])
+def options_flow_scan(
+    top: int = Query(default=20, ge=1, le=50),
+):
+    """Scan for unusual options activity across the universe.
+
+    Note: Due to Polygon's 5 calls/min rate limit, this scans symbols
+    sequentially and may take several minutes for large scans.
+    """
+    cache_key = f"of_scan_{top}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:  # 5 min cache
+        return cached[1]
+
+    symbols = get_default_universe()
+    results = of_screen(symbols, top_n=top)
+    _scan_cache[cache_key] = (time.time(), results)
+    return results
+
+
+@router.get("/options-flow/{symbol}", response_model=OptionsFlowResult)
+def options_flow_symbol(symbol: str):
+    """Get options flow analysis for a single symbol."""
+    result = of_analyze(symbol.upper())
+    if result is None:
+        return OptionsFlowResult(
+            symbol=symbol.upper(),
+            unusual_contracts=[],
+            put_call_ratio=0,
+            total_call_volume=0,
+            total_put_volume=0,
+            flow_sentiment="neutral",
+            alert_reasons=["No options data available (Polygon API key missing or no data)"],
+        )
+    return result
