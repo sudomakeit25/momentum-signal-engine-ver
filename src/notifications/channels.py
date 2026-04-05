@@ -196,6 +196,82 @@ def set_cooldown(symbol: str) -> None:
         pass
 
 
+# --- 44. Weekly Email Digest ---
+
+def generate_weekly_digest(scan_results: list, leaderboard: dict, alerts_sent: int) -> str:
+    """Generate a weekly email digest summary."""
+    lines = ["Momentum Signal Engine - Weekly Digest\n", "=" * 40, ""]
+    stats = leaderboard.get("stats", {})
+    if stats:
+        lines.append(f"Signal Accuracy: {stats.get('win_rate', 0)}% win rate")
+        lines.append(f"Signals: {leaderboard.get('resolved', 0)} resolved, {leaderboard.get('pending', 0)} pending")
+        lines.append(f"Alerts sent: {alerts_sent}\n")
+    if scan_results:
+        lines.append("Top Momentum:")
+        for r in scan_results[:10]:
+            sym = r.symbol if hasattr(r, 'symbol') else r.get('symbol', '')
+            score = r.score if hasattr(r, 'score') else r.get('score', 0)
+            lines.append(f"  {sym}: Score {score:.0f}")
+    return "\n".join(lines)
+
+
+def send_email_digest(to_email: str, subject: str, body: str) -> bool:
+    """Send an email via SMTP."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from config.settings import settings
+    if not settings.smtp_email or not settings.smtp_password:
+        return False
+    try:
+        msg = MIMEText(body)
+        msg["From"] = settings.smtp_email
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(settings.smtp_email, settings.smtp_password)
+            server.send_message(msg)
+        logger.info("Email digest sent to %s", to_email)
+        return True
+    except Exception as e:
+        logger.warning("Email digest failed: %s", e)
+        return False
+
+
+# --- 48. Escalation Alerts ---
+
+def check_escalation(symbol: str, current_confidence: float) -> dict:
+    """Check if a signal strengthened since last alert."""
+    redis = _get_redis()
+    if not redis:
+        return {"escalate": False}
+    try:
+        key = f"mse:last_confidence:{symbol}"
+        data = redis.get(key)
+        prev = float(data) if data else 0
+        escalate = current_confidence > prev + 0.1
+        redis.set(key, str(current_confidence))
+        return {"escalate": escalate, "previous": prev, "current": current_confidence}
+    except Exception:
+        return {"escalate": False}
+
+
+# --- 60. Social Sentiment Proxy ---
+
+def get_social_sentiment_proxy(symbol: str) -> dict:
+    """Estimate social sentiment from news + signal data (no Reddit API needed)."""
+    from src.scanner.news_sentiment import get_symbol_sentiment
+    news = get_symbol_sentiment(symbol)
+    article_count = news.get("article_count", 0)
+    avg_score = news.get("avg_score", 0)
+    return {
+        "symbol": symbol,
+        "news_articles": article_count,
+        "news_score": avg_score,
+        "sentiment": news.get("sentiment", "neutral"),
+        "buzz_level": "high" if article_count > 5 else "medium" if article_count > 2 else "low",
+    }
+
+
 # --- 50. Multi-channel Routing ---
 
 def route_alert(signal: dict, config: dict) -> dict:

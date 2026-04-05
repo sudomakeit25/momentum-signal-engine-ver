@@ -2329,3 +2329,81 @@ def zapier_webhook(payload: WebhookPayload):
         "webhook_sent": False,
     })
     return {"status": "received"}
+
+
+# --- Tax Lot Optimizer (#27) ---
+
+from src.trading.tax_lots import optimize_tax_lots
+
+
+@router.get("/portfolio/tax-lots")
+def tax_lots():
+    """Analyze positions for tax-loss harvesting opportunities."""
+    return optimize_tax_lots()
+
+
+# --- Weekly Digest & Escalation (#44, #48) ---
+
+from src.notifications.channels import (
+    generate_weekly_digest, send_email_digest,
+    check_escalation, get_social_sentiment_proxy,
+)
+
+
+@router.get("/notifications/weekly-digest")
+def weekly_digest():
+    """Generate weekly email digest."""
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    scan_results = mom_cached[1] if mom_cached else []
+
+    lb_cached = _scan_cache.get("leaderboard_stats")
+    leaderboard = lb_cached[1] if lb_cached else {}
+
+    alerts = get_alert_history(limit=100)
+    body = generate_weekly_digest(scan_results, leaderboard, len(alerts))
+    return {"digest": body}
+
+
+@router.post("/notifications/send-digest")
+def send_digest(to_email: str = Query(...)):
+    """Send weekly digest to an email address."""
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    scan_results = mom_cached[1] if mom_cached else []
+    lb_cached = _scan_cache.get("leaderboard_stats")
+    leaderboard = lb_cached[1] if lb_cached else {}
+    alerts = get_alert_history(limit=100)
+
+    body = generate_weekly_digest(scan_results, leaderboard, len(alerts))
+    ok = send_email_digest(to_email, "MSE Weekly Digest", body)
+    return {"status": "sent" if ok else "error"}
+
+
+@router.get("/signals/escalation/{symbol}")
+def signal_escalation(symbol: str, confidence: float = Query(...)):
+    """Check if a signal has escalated (strengthened)."""
+    return check_escalation(symbol.upper(), confidence)
+
+
+# --- Social Sentiment (#60) ---
+
+@router.get("/sentiment/{symbol}")
+def social_sentiment(symbol: str):
+    """Get social sentiment proxy for a symbol."""
+    return get_social_sentiment_proxy(symbol.upper())
+
+
+# --- Referral Program (#83) ---
+
+from src.auth.referrals import get_referral_stats, record_referral
+
+
+@router.get("/referral/stats")
+def referral_stats(user: dict = Depends(get_current_user)):
+    """Get referral stats for the authenticated user."""
+    return get_referral_stats(user["user_id"])
+
+
+@router.post("/referral/apply")
+def apply_referral(code: str = Query(...)):
+    """Apply a referral code during registration."""
+    return {"applied": record_referral(code, ""), "code": code}
