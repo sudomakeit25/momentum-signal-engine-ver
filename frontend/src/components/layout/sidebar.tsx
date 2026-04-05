@@ -28,6 +28,9 @@ import {
   Send,
   Layers,
   Target,
+  BookMarked,
+  ClipboardList,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +52,9 @@ const NAV_ITEMS = [
   { href: "/options-flow", label: "Options Flow", icon: Activity },
   { href: "/dark-pool", label: "Dark Pool", icon: Layers },
   { href: "/earnings", label: "Earnings", icon: Calendar },
+  { href: "/journal", label: "Trade Journal", icon: BookMarked },
+  { href: "/alert-history", label: "Alert History", icon: ClipboardList },
+  { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
   { href: "/notifications", label: "Notifications", icon: Send },
   { href: "/guide", label: "Guide", icon: BookOpen },
 ];

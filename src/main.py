@@ -105,6 +105,20 @@ def _refresh_loop():
 
             _seen_signal_keys = current_keys
 
+            # --- Watchlist alerts: check if any watched symbol has new signals ---
+            try:
+                from src.data.redis_store import get_watchlist
+                watchlist = get_watchlist()
+                if watchlist:
+                    watchlist_signals = [s for s in all_signals if s.symbol in watchlist]
+                    watchlist_new = [s for s in watchlist_signals
+                                    if f"{s.symbol}:{s.action.value}:{s.entry:.2f}" not in _seen_signal_keys]
+                    if watchlist_new:
+                        logger.info("Watchlist alert: %d signals for watched stocks", len(watchlist_new))
+                        dispatch_alerts(watchlist_new)
+            except Exception as e:
+                logger.debug("Watchlist alert check failed: %s", e)
+
             cache_key = "scan_20_5.0_500.0_500000"
             _scan_cache[cache_key] = (time.time(), results)
             logger.info("Background refresh complete: %d results cached", len(results))

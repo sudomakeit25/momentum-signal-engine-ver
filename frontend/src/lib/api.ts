@@ -16,3 +16,27 @@ export async function apiFetch<T>(
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
+
+export async function apiPost<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>
+): Promise<T> {
+  const url = new URL(path, API_BASE);
+  if (params) {
+    Object.entries(params).forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        url.searchParams.set(key, String(val));
+      }
+    });
+  }
+  const res = await fetch(url.toString(), { method: "POST" });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const url = new URL(path, API_BASE);
+  const res = await fetch(url.toString(), { method: "DELETE" });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}

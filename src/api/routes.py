@@ -941,3 +941,167 @@ def smart_money_convergence():
     results = find_convergence(dp_results, of_results, earn_results, mom_results)
     _scan_cache[cache_key] = (time.time(), results)
     return results
+
+
+# --- Trade Journal Endpoints ---
+
+from src.data.redis_store import (
+    get_trades, save_trade, delete_trade, update_trade,
+    get_alert_history, get_watchlist, save_watchlist,
+)
+from src.journal.trade_journal import import_from_alpaca, compute_stats
+
+
+@router.get("/journal/trades")
+def journal_trades():
+    """Get all trades from the journal."""
+    return get_trades()
+
+
+@router.post("/journal/trades")
+def journal_add_trade(
+    symbol: str = Query(...),
+    side: str = Query(default="buy"),
+    shares: float = Query(...),
+    entry_price: float = Query(...),
+    stop_loss: float = Query(default=0),
+    target: float = Query(default=0),
+    setup_type: str = Query(default=""),
+    notes: str = Query(default=""),
+):
+    """Add a trade manually."""
+    trade = {
+        "symbol": symbol.upper(),
+        "side": side,
+        "shares": shares,
+        "entry_price": entry_price,
+        "exit_price": None,
+        "stop_loss": stop_loss or None,
+        "target": target or None,
+        "status": "open",
+        "setup_type": setup_type,
+        "notes": notes,
+        "entry_date": datetime.now().isoformat(),
+        "exit_date": None,
+        "pnl": None,
+        "r_multiple": None,
+    }
+    ok = save_trade(trade)
+    return {"status": "saved" if ok else "error"}
+
+
+@router.post("/journal/trades/{trade_id}/close")
+def journal_close_trade(
+    trade_id: str,
+    exit_price: float = Query(...),
+):
+    """Close an open trade with an exit price."""
+    trades = get_trades()
+    trade = next((t for t in trades if t.get("id") == trade_id), None)
+    if not trade:
+        return {"status": "error", "message": "Trade not found"}
+
+    entry = trade.get("entry_price", 0)
+    shares = trade.get("shares", 0)
+    is_buy = trade.get("side", "buy").lower() in ("buy", "long")
+
+    if is_buy:
+        pnl = (exit_price - entry) * shares
+    else:
+        pnl = (entry - exit_price) * shares
+
+    stop = trade.get("stop_loss")
+    r_multiple = None
+    if stop and stop != entry:
+        risk = abs(entry - stop)
+        if is_buy:
+            r_multiple = round((exit_price - entry) / risk, 2) if risk > 0 else 0
+        else:
+            r_multiple = round((entry - exit_price) / risk, 2) if risk > 0 else 0
+
+    ok = update_trade(trade_id, {
+        "exit_price": exit_price,
+        "exit_date": datetime.now().isoformat(),
+        "status": "closed",
+        "pnl": round(pnl, 2),
+        "r_multiple": r_multiple,
+    })
+    return {"status": "closed" if ok else "error", "pnl": round(pnl, 2)}
+
+
+@router.delete("/journal/trades/{trade_id}")
+def journal_delete_trade(trade_id: str):
+    """Delete a trade from the journal."""
+    ok = delete_trade(trade_id)
+    return {"status": "deleted" if ok else "error"}
+
+
+@router.post("/journal/import-alpaca")
+def journal_import(
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Import closed orders from Alpaca."""
+    imported = import_from_alpaca(days=days)
+    return {"imported": len(imported), "trades": imported}
+
+
+@router.get("/journal/stats")
+def journal_stats():
+    """Get trade journal performance statistics."""
+    return compute_stats()
+
+
+# --- Alert History Endpoints ---
+
+@router.get("/alerts/history")
+def alert_history(
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Get dispatched alert history."""
+    return get_alert_history(limit=limit)
+
+
+# --- Signal Backtester Endpoints ---
+
+from src.backtest.signal_tester import backtest_signals
+
+
+@router.get("/backtest/signals/{symbol}")
+def backtest_symbol_signals(
+    symbol: str,
+    days: int = Query(default=200, ge=50, le=500),
+    lookforward: int = Query(default=10, ge=3, le=30),
+):
+    """Backtest generated signals for a symbol against historical outcomes."""
+    cache_key = f"signal_bt_{symbol}_{days}_{lookforward}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 600:
+        return cached[1]
+
+    result = backtest_signals(symbol.upper(), days=days, lookforward=lookforward)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+# --- Watchlist Alerts Endpoints ---
+
+@router.get("/watchlist/server")
+def watchlist_get():
+    """Get server-side watchlist (synced to Redis)."""
+    return get_watchlist()
+
+
+@router.post("/watchlist/server")
+def watchlist_save(symbols: str = Query(..., description="Comma-separated symbols")):
+    """Save watchlist to Redis."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    ok = save_watchlist(sym_list)
+    return {"status": "saved" if ok else "error", "symbols": sym_list}
+
+
+@router.post("/watchlist/sync")
+def watchlist_sync(symbols: str = Query(..., description="Comma-separated symbols")):
+    """Sync frontend watchlist to server for alert monitoring."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    ok = save_watchlist(sym_list)
+    return {"status": "synced" if ok else "error", "count": len(sym_list)}

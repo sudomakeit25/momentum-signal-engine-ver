@@ -305,4 +305,21 @@ def dispatch_alerts(signals: list) -> dict:
     elif not config.sms_to:
         logger.info("SMS skipped: no phone number configured")
 
+    # Log alerts to history
+    try:
+        from src.data.redis_store import log_alert
+        for s in filtered:
+            log_alert({
+                "symbol": s.symbol,
+                "action": s.action.value,
+                "setup_type": s.setup_type.value if hasattr(s.setup_type, 'value') else str(s.setup_type),
+                "entry": s.entry,
+                "confidence": s.confidence,
+                "reason": s.reason[:100],
+                "sms_sent": results["sms"],
+                "webhook_sent": results["webhook"],
+            })
+    except Exception as e:
+        logger.debug("Alert history logging failed: %s", e)
+
     return results
