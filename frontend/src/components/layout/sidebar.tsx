@@ -41,6 +41,9 @@ import {
   SlidersHorizontal,
   MessageSquare,
   Wrench,
+  Zap,
+  Crosshair,
+  PieChart,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -56,10 +59,12 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/scanner", label: "Scanner", icon: ScanSearch },
       { href: "/custom-screener", label: "Custom Screener", icon: SlidersHorizontal },
+      { href: "/signals-advanced", label: "Advanced Signals", icon: Zap },
       { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
       { href: "/watchlist", label: "Watchlist", icon: Eye },
       { href: "/trading", label: "Paper Trading", icon: DollarSign },
       { href: "/portfolio", label: "Portfolio", icon: Wallet },
+      { href: "/portfolio-analytics", label: "Analytics", icon: PieChart },
       { href: "/position-sizer", label: "Position Sizer", icon: Calculator },
     ],
   },
@@ -78,6 +83,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Analysis",
     items: [
       { href: "/multi-tf", label: "Multi-Timeframe", icon: Layers },
+      { href: "/technical", label: "Technical Tools", icon: Crosshair },
       { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
       { href: "/options-builder", label: "Options Builder", icon: Wrench },

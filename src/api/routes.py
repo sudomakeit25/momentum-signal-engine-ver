@@ -1722,3 +1722,141 @@ def options_strategy_build(
 ):
     """Build an options strategy with P&L calculations."""
     return build_strategy(strategy_key, stock_price)
+
+
+# --- Advanced Signal Scanners (1-4, 14-18, 20) ---
+
+from src.scanner.advanced_signals import (
+    get_vix_adjustment, scan_gaps, scan_unusual_volume, scan_short_squeeze,
+    scan_bollinger_squeeze, scan_macd_divergence, scan_ema_crosses,
+    analyze_gap_fill, calculate_pivots, scan_atr_ranking,
+)
+
+
+@router.get("/signals/vix")
+def vix_status():
+    """Get VIX level and confidence adjustment."""
+    return get_vix_adjustment()
+
+
+@router.get("/signals/gaps")
+def gap_scanner(min_gap: float = Query(default=2.0)):
+    """Scan for premarket/afterhours gaps."""
+    return scan_gaps(min_gap_pct=min_gap)
+
+
+@router.get("/signals/unusual-volume")
+def unusual_volume(min_ratio: float = Query(default=3.0)):
+    """Flag stocks with unusually high volume."""
+    return scan_unusual_volume(min_ratio=min_ratio)
+
+
+@router.get("/signals/short-squeeze")
+def short_squeeze():
+    """Scan for short squeeze candidates."""
+    return scan_short_squeeze()
+
+
+@router.get("/signals/bollinger-squeeze")
+def bollinger_squeeze():
+    """Detect Bollinger Band squeezes."""
+    return scan_bollinger_squeeze()
+
+
+@router.get("/signals/macd-divergence")
+def macd_divergence():
+    """Scan for MACD divergences."""
+    return scan_macd_divergence()
+
+
+@router.get("/signals/ema-crosses")
+def ema_crosses():
+    """Detect golden/death crosses (50/200 EMA)."""
+    return scan_ema_crosses()
+
+
+@router.get("/signals/gap-fill/{symbol}")
+def gap_fill(symbol: str):
+    """Calculate gap fill probability for a symbol."""
+    return analyze_gap_fill(symbol.upper())
+
+
+@router.get("/signals/pivots/{symbol}")
+def pivot_points(symbol: str):
+    """Calculate pivot points for a symbol."""
+    return calculate_pivots(symbol.upper())
+
+
+@router.get("/signals/atr-ranking")
+def atr_ranking():
+    """Rank stocks by ATR volatility."""
+    return scan_atr_ranking()
+
+
+# --- Market Data Features (5-8, 11-13) ---
+
+from src.scanner.market_data import (
+    get_insider_aggregation, get_ipo_calendar, get_dividend_calendar,
+    get_stock_splits, calculate_fibonacci, calculate_volume_profile,
+    calculate_ichimoku,
+)
+
+
+@router.get("/market/insiders")
+def insider_aggregation():
+    """Get aggregated insider buying across sectors."""
+    return get_insider_aggregation()
+
+
+@router.get("/market/ipos")
+def ipo_calendar():
+    """Get upcoming and recent IPOs."""
+    return get_ipo_calendar()
+
+
+@router.get("/market/dividends")
+def dividend_calendar():
+    """Get upcoming dividend dates."""
+    return get_dividend_calendar()
+
+
+@router.get("/market/splits")
+def stock_splits():
+    """Get upcoming and recent stock splits."""
+    return get_stock_splits()
+
+
+@router.get("/analysis/fibonacci/{symbol}")
+def fibonacci(symbol: str, days: int = Query(default=60)):
+    """Calculate Fibonacci retracement levels."""
+    return calculate_fibonacci(symbol.upper(), days=days)
+
+
+@router.get("/analysis/volume-profile/{symbol}")
+def volume_profile(symbol: str):
+    """Calculate price-by-volume profile."""
+    return calculate_volume_profile(symbol.upper())
+
+
+@router.get("/analysis/ichimoku/{symbol}")
+def ichimoku(symbol: str):
+    """Calculate Ichimoku cloud components."""
+    return calculate_ichimoku(symbol.upper())
+
+
+# --- Portfolio Analytics (21-30) ---
+
+from src.trading.portfolio_analytics import get_portfolio_analytics
+
+
+@router.get("/portfolio/analytics")
+def portfolio_analytics():
+    """Get comprehensive portfolio analytics (heat map, drawdown, Sharpe, beta, etc.)."""
+    cache_key = "portfolio_analytics"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 60:
+        return cached[1]
+
+    result = get_portfolio_analytics()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
