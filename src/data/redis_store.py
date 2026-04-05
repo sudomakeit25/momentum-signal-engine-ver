@@ -13,6 +13,7 @@ logger = logging.getLogger("mse.redis_store")
 _TRADES_KEY = "mse:trades"
 _ALERT_HISTORY_KEY = "mse:alert_history"
 _WATCHLIST_KEY = "mse:watchlist"
+_LEADERBOARD_KEY = "mse:leaderboard"
 
 
 def _get_redis():
@@ -166,4 +167,83 @@ def save_watchlist(symbols: list[str]) -> bool:
         return True
     except Exception as e:
         logger.warning("Failed to save watchlist: %s", e)
+        return False
+
+
+# --- Per-user Storage ---
+
+def get_user_data(user_id: str, key: str) -> list | dict | None:
+    """Get user-scoped data from Redis."""
+    redis = _get_redis()
+    if not redis:
+        return None
+    try:
+        data = redis.get(f"mse:user:{user_id}:{key}")
+        if data:
+            return json.loads(data) if isinstance(data, str) else data
+        return None
+    except Exception as e:
+        logger.warning("Failed to load user data %s/%s: %s", user_id, key, e)
+        return None
+
+
+def set_user_data(user_id: str, key: str, data) -> bool:
+    """Set user-scoped data in Redis."""
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        redis.set(f"mse:user:{user_id}:{key}", json.dumps(data))
+        return True
+    except Exception as e:
+        logger.warning("Failed to save user data %s/%s: %s", user_id, key, e)
+        return False
+
+
+# --- Signal Leaderboard ---
+
+def record_signal(signal_data: dict) -> bool:
+    """Record a generated signal for leaderboard tracking."""
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        existing = redis.get(_LEADERBOARD_KEY)
+        signals = json.loads(existing) if existing else []
+        signals.append(signal_data)
+        # Keep last 2000 signals
+        if len(signals) > 2000:
+            signals = signals[-2000:]
+        redis.set(_LEADERBOARD_KEY, json.dumps(signals))
+        return True
+    except Exception as e:
+        logger.warning("Failed to record signal: %s", e)
+        return False
+
+
+def get_leaderboard_signals() -> list[dict]:
+    """Get all tracked signals for leaderboard."""
+    redis = _get_redis()
+    if not redis:
+        return []
+    try:
+        data = redis.get(_LEADERBOARD_KEY)
+        if data:
+            return json.loads(data) if isinstance(data, str) else data
+        return []
+    except Exception as e:
+        logger.warning("Failed to load leaderboard: %s", e)
+        return []
+
+
+def update_leaderboard_signals(signals: list[dict]) -> bool:
+    """Bulk update leaderboard signals (for outcome checks)."""
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        redis.set(_LEADERBOARD_KEY, json.dumps(signals))
+        return True
+    except Exception as e:
+        logger.warning("Failed to update leaderboard: %s", e)
         return False

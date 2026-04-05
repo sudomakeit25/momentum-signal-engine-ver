@@ -31,6 +31,8 @@ import {
   BookMarked,
   ClipboardList,
   FlaskConical,
+  Trophy,
+  LogIn,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +57,9 @@ const NAV_ITEMS = [
   { href: "/journal", label: "Trade Journal", icon: BookMarked },
   { href: "/alert-history", label: "Alert History", icon: ClipboardList },
   { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
+  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { href: "/notifications", label: "Notifications", icon: Send },
+  { href: "/login", label: "Login", icon: LogIn },
   { href: "/guide", label: "Guide", icon: BookOpen },
 ];
 

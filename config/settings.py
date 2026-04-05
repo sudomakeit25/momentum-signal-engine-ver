@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Financial Modeling Prep (Earnings)
     fmp_api_key: str = ""
 
+    # Auth
+    jwt_secret: str = "mse-default-secret-change-in-production"
+    jwt_expiry_hours: int = 72
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

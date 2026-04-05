@@ -90,6 +90,18 @@ def _refresh_loop():
                 new_signals = [s for s in all_signals
                                if f"{s.symbol}:{s.action.value}:{s.entry:.2f}" not in _seen_signal_keys]
 
+            # --- Track signals for leaderboard ---
+            if new_signals:
+                try:
+                    from src.scanner.leaderboard import track_signals, check_outcomes
+                    tracked = track_signals(new_signals)
+                    if tracked:
+                        logger.info("Leaderboard: tracked %d new signals", tracked)
+                    # Check outcomes for older signals every cycle
+                    check_outcomes(lookback_days=10)
+                except Exception as e:
+                    logger.debug("Leaderboard tracking failed: %s", e)
+
             if new_signals:
                 logger.info("Dispatching %d new signals...", len(new_signals))
                 try:

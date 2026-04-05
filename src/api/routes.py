@@ -1105,3 +1105,154 @@ def watchlist_sync(symbols: str = Query(..., description="Comma-separated symbol
     sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     ok = save_watchlist(sym_list)
     return {"status": "synced" if ok else "error", "count": len(sym_list)}
+
+
+# --- Auth Endpoints ---
+
+from src.auth.users import register as auth_register, login as auth_login
+from src.auth.deps import get_current_user, optional_user
+from src.data.redis_store import get_user_data, set_user_data
+from fastapi import Depends
+
+
+@router.post("/auth/register")
+def register(
+    email: str = Query(...),
+    password: str = Query(...),
+    name: str = Query(default=""),
+):
+    """Register a new user."""
+    result = auth_register(email, password, name)
+    if "error" in result:
+        return {"status": "error", "message": result["error"]}
+    return {"status": "ok", **result}
+
+
+@router.post("/auth/login")
+def login(
+    email: str = Query(...),
+    password: str = Query(...),
+):
+    """Login and get a JWT token."""
+    result = auth_login(email, password)
+    if "error" in result:
+        return {"status": "error", "message": result["error"]}
+    return {"status": "ok", **result}
+
+
+@router.get("/auth/me")
+def auth_me(user: dict = Depends(get_current_user)):
+    """Get current user info."""
+    return {"user_id": user["user_id"], "email": user["email"]}
+
+
+# --- Per-user Data Endpoints ---
+
+@router.get("/user/trades")
+def user_trades(user: dict = Depends(get_current_user)):
+    """Get trades for the authenticated user."""
+    data = get_user_data(user["user_id"], "trades")
+    return data or []
+
+
+@router.post("/user/trades")
+def user_add_trade(
+    symbol: str = Query(...),
+    side: str = Query(default="buy"),
+    shares: float = Query(...),
+    entry_price: float = Query(...),
+    stop_loss: float = Query(default=0),
+    target: float = Query(default=0),
+    setup_type: str = Query(default=""),
+    notes: str = Query(default=""),
+    user: dict = Depends(get_current_user),
+):
+    """Add a trade for the authenticated user."""
+    trades = get_user_data(user["user_id"], "trades") or []
+    trade = {
+        "id": f"t_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+        "symbol": symbol.upper(),
+        "side": side,
+        "shares": shares,
+        "entry_price": entry_price,
+        "exit_price": None,
+        "stop_loss": stop_loss or None,
+        "target": target or None,
+        "status": "open",
+        "setup_type": setup_type,
+        "notes": notes,
+        "entry_date": datetime.now().isoformat(),
+        "exit_date": None,
+        "pnl": None,
+        "r_multiple": None,
+        "created_at": datetime.now().isoformat(),
+    }
+    trades.append(trade)
+    ok = set_user_data(user["user_id"], "trades", trades)
+    return {"status": "saved" if ok else "error"}
+
+
+@router.get("/user/watchlist")
+def user_watchlist(user: dict = Depends(get_current_user)):
+    """Get watchlist for the authenticated user."""
+    data = get_user_data(user["user_id"], "watchlist")
+    return data or []
+
+
+@router.post("/user/watchlist")
+def user_save_watchlist(
+    symbols: str = Query(..., description="Comma-separated symbols"),
+    user: dict = Depends(get_current_user),
+):
+    """Save watchlist for the authenticated user."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    ok = set_user_data(user["user_id"], "watchlist", sym_list)
+    return {"status": "saved" if ok else "error", "symbols": sym_list}
+
+
+@router.get("/user/config")
+def user_config(user: dict = Depends(get_current_user)):
+    """Get notification config for the authenticated user."""
+    data = get_user_data(user["user_id"], "notification_config")
+    return data or {}
+
+
+@router.post("/user/config")
+def user_save_config(
+    sms_to: str = Query(default=""),
+    sms_method: str = Query(default="email_gateway"),
+    sms_carrier: str = Query(default=""),
+    sms_consent: bool = Query(default=False),
+    auto_alerts_enabled: bool = Query(default=False),
+    min_confidence: float = Query(default=0.6),
+    user: dict = Depends(get_current_user),
+):
+    """Save notification config for the authenticated user."""
+    config = {
+        "sms_to": sms_to,
+        "sms_method": sms_method,
+        "sms_carrier": sms_carrier,
+        "sms_consent": sms_consent,
+        "auto_alerts_enabled": auto_alerts_enabled,
+        "min_confidence": min_confidence,
+    }
+    ok = set_user_data(user["user_id"], "notification_config", config)
+    return {"status": "saved" if ok else "error"}
+
+
+# --- Signal Leaderboard Endpoints (public) ---
+
+from src.scanner.leaderboard import compute_leaderboard
+
+
+@router.get("/leaderboard")
+def leaderboard():
+    """Get signal accuracy leaderboard (public, no auth required)."""
+    cache_key = "leaderboard_stats"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 120:
+        return cached[1]
+
+    result = compute_leaderboard()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
