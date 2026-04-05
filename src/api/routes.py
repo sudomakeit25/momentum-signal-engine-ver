@@ -735,3 +735,108 @@ def dark_pool_symbol(
             alert_reasons=[],
         )
     return result
+
+
+# --- Earnings Whisper Endpoints ---
+
+from src.data.models import EarningsConviction, EarningsEvent, InsiderTrade
+from src.scanner.earnings_whisper import (
+    get_upcoming_earnings,
+    compute_conviction,
+    screen_earnings,
+)
+from src.data.fmp_client import (
+    get_earnings_calendar as fmp_earnings_cal,
+    get_insider_trades as fmp_insider_trades,
+)
+
+
+@router.get("/earnings/upcoming", response_model=list[EarningsEvent])
+def earnings_upcoming(
+    days_ahead: int = Query(default=14, ge=1, le=30),
+):
+    """Get upcoming earnings events for stocks in our universe."""
+    symbols = get_default_universe()
+    return get_upcoming_earnings(symbols, days_ahead=days_ahead)
+
+
+@router.get("/earnings/whisper", response_model=list[EarningsConviction])
+def earnings_whisper(
+    days_ahead: int = Query(default=14, ge=1, le=30),
+    min_conviction: float = Query(default=0, ge=0, le=100),
+):
+    """Get earnings conviction scores for upcoming earnings."""
+    cache_key = f"earnings_whisper_{days_ahead}_{min_conviction}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 600:  # 10 min cache
+        return cached[1]
+
+    symbols = get_default_universe()
+    results = screen_earnings(symbols, days_ahead=days_ahead, min_conviction=min_conviction)
+    _scan_cache[cache_key] = (time.time(), results)
+    return results
+
+
+@router.get("/earnings/conviction/{symbol}", response_model=EarningsConviction)
+def earnings_conviction(symbol: str):
+    """Get earnings conviction score for a single symbol."""
+    from datetime import datetime
+    events = get_upcoming_earnings([symbol.upper()], days_ahead=30)
+    if not events:
+        return EarningsConviction(
+            symbol=symbol.upper(),
+            earnings_date=datetime.now(),
+            conviction_score=0,
+            eps_surprise_history=[],
+            insider_sentiment="neutral",
+            analyst_revisions="stable",
+            components={},
+            alert_reasons=["No upcoming earnings found"],
+        )
+    result = compute_conviction(symbol.upper(), events[0].date)
+    if result is None:
+        return EarningsConviction(
+            symbol=symbol.upper(),
+            earnings_date=events[0].date,
+            conviction_score=0,
+            eps_surprise_history=[],
+            insider_sentiment="neutral",
+            analyst_revisions="stable",
+            components={},
+            alert_reasons=["Could not compute conviction (FMP API key missing?)"],
+        )
+    return result
+
+
+@router.get("/insider/{symbol}", response_model=list[InsiderTrade])
+def insider_trades(
+    symbol: str,
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Get insider trading activity for a symbol."""
+    trades = fmp_insider_trades(symbol.upper(), limit=limit)
+    results = []
+    for t in trades:
+        try:
+            tx_type = t.get("transactionType", "").lower()
+            if "purchase" in tx_type or "buy" in tx_type or tx_type == "p-purchase":
+                transaction = "purchase"
+            else:
+                transaction = "sale"
+
+            shares = abs(t.get("securitiesTransacted", 0))
+            price = t.get("price", 0) or 0
+
+            results.append(InsiderTrade(
+                symbol=symbol.upper(),
+                insider_name=t.get("reportingName", "Unknown"),
+                title=t.get("typeOfOwner", ""),
+                transaction_type=transaction,
+                shares=int(shares),
+                price=price,
+                total_value=round(shares * price, 2),
+                filing_date=t.get("filingDate", "2000-01-01"),
+            ))
+        except Exception:
+            continue
+    return results
