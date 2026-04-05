@@ -1313,3 +1313,118 @@ def leaderboard():
     result = compute_leaderboard()
     _scan_cache[cache_key] = (time.time(), result)
     return result
+
+
+# --- News Sentiment Endpoints ---
+
+from src.scanner.news_sentiment import fetch_news, get_symbol_sentiment, get_market_sentiment
+
+
+@router.get("/news/feed")
+def news_feed():
+    """Get latest news with sentiment scoring."""
+    cache_key = "news_feed"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+
+    symbols = get_default_universe()
+    articles = fetch_news(symbols)
+    market = get_market_sentiment(articles)
+    result = {"market_sentiment": market, "articles": articles[:50]}
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/news/{symbol}")
+def news_symbol(symbol: str):
+    """Get news sentiment for a specific symbol."""
+    symbols = get_default_universe()
+    articles = fetch_news(symbols)
+    return get_symbol_sentiment(symbol.upper(), articles)
+
+
+# --- Sector Flow Endpoints ---
+
+from src.scanner.sector_flow import compute_sector_flow
+
+
+@router.get("/sectors/flow")
+def sector_flow():
+    """Get sector rotation dashboard with aggregated flow data."""
+    cache_key = "sector_flow"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+
+    symbols = get_default_universe()
+
+    dp_results = []
+    dp_cached = _scan_cache.get("dp_scan_20_20")
+    if dp_cached and time.time() - dp_cached[0] < 600:
+        dp_results = dp_cached[1]
+
+    of_results = []
+    of_cached = _scan_cache.get("of_scan_20")
+    if of_cached and time.time() - of_cached[0] < 600:
+        of_results = of_cached[1]
+
+    mom_results = []
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    if mom_cached and time.time() - mom_cached[0] < 300:
+        mom_results = mom_cached[1]
+
+    result = compute_sector_flow(dp_results, of_results, mom_results)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+# --- Correlation Alerts Endpoints ---
+
+from src.scanner.correlation_alerts import scan_pairs, analyze_pair
+
+
+@router.get("/correlation/scan")
+def correlation_scan(
+    days: int = Query(default=60, ge=20, le=200),
+):
+    """Scan predefined pairs for correlation divergences."""
+    cache_key = f"corr_scan_{days}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+
+    result = scan_pairs(days=days)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/correlation/{sym_a}/{sym_b}")
+def correlation_pair(
+    sym_a: str,
+    sym_b: str,
+    days: int = Query(default=60, ge=20, le=200),
+):
+    """Analyze correlation between two specific symbols."""
+    result = analyze_pair(sym_a.upper(), sym_b.upper(), days=days)
+    if result is None:
+        return {"pair": [sym_a.upper(), sym_b.upper()], "error": "Insufficient data"}
+    return result
+
+
+# --- Market Regime Endpoints ---
+
+from src.scanner.market_regime import detect_regime
+
+
+@router.get("/market/regime")
+def market_regime():
+    """Detect current market regime (trending, choppy, volatile, etc.)."""
+    cache_key = "market_regime"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+
+    result = detect_regime()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result

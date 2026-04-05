@@ -35,6 +35,9 @@ import {
   LogIn,
   LogOut,
   User,
+  Newspaper,
+  GitCompareArrows,
+  Gauge,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -53,7 +56,11 @@ const NAV_ITEMS = [
   { href: "/sectors", label: "Sectors", icon: TrendingUp },
   { href: "/correlation", label: "Correlation", icon: Grid3x3 },
   { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
+  { href: "/market-regime", label: "Market Regime", icon: Gauge },
   { href: "/smart-money", label: "Smart Money", icon: Target },
+  { href: "/news", label: "News Sentiment", icon: Newspaper },
+  { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
+  { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
   { href: "/options-flow", label: "Options Flow", icon: Activity },
   { href: "/dark-pool", label: "Dark Pool", icon: Layers },
   { href: "/earnings", label: "Earnings", icon: Calendar },

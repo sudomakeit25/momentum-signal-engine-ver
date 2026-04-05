@@ -6,7 +6,7 @@ signal accuracy by setup type, time period, and symbol.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.data import client as alpaca_client
 from src.data.redis_store import (
@@ -184,16 +184,23 @@ def compute_leaderboard() -> dict:
         d["win_rate"] = round(d["wins"] / d["total"] * 100, 1) if d["total"] else 0
 
     # By time period (last 7d, 30d, all)
+    now = datetime.now(timezone.utc)
     periods = {}
     for label, days in [("7d", 7), ("30d", 30), ("all", 9999)]:
-        cutoff = datetime.now(timezone.utc).isoformat()[:10]
-        period_signals = resolved  # simplified - use all for now
+        cutoff = (now - timedelta(days=days)).isoformat() if days < 9999 else ""
+        period_signals = [
+            s for s in resolved
+            if not cutoff or s.get("recorded_at", "") >= cutoff
+        ]
         p_wins = [s for s in period_signals if s["outcome"] == "win"]
         periods[label] = {
             "total": len(period_signals),
             "wins": len(p_wins),
             "win_rate": round(len(p_wins) / len(period_signals) * 100, 1) if period_signals else 0,
         }
+
+    # Weekly performance over time (for charting)
+    weekly_performance = _compute_weekly_performance(resolved)
 
     return {
         "total_tracked": len(signals),
@@ -206,5 +213,39 @@ def compute_leaderboard() -> dict:
             "periods": periods,
         },
         "by_setup": by_setup,
+        "weekly_performance": weekly_performance,
         "recent": list(reversed(resolved[-20:])),
     }
+
+
+def _compute_weekly_performance(resolved: list[dict]) -> list[dict]:
+    """Compute win rate by week for time-series charting."""
+    if not resolved:
+        return []
+
+    # Group by week
+    weeks: dict[str, dict] = {}
+    for s in resolved:
+        recorded = s.get("recorded_at", "")
+        if not recorded:
+            continue
+        try:
+            dt = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+            week_key = dt.strftime("%Y-W%W")
+            week_start = (dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+
+        if week_key not in weeks:
+            weeks[week_key] = {"week": week_start, "total": 0, "wins": 0}
+        weeks[week_key]["total"] += 1
+        if s["outcome"] == "win":
+            weeks[week_key]["wins"] += 1
+
+    result = []
+    for week_key in sorted(weeks.keys()):
+        w = weeks[week_key]
+        w["win_rate"] = round(w["wins"] / w["total"] * 100, 1) if w["total"] else 0
+        result.append(w)
+
+    return result
