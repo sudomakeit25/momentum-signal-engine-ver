@@ -886,3 +886,58 @@ def options_flow_symbol(symbol: str):
             alert_reasons=["No options data available (Polygon API key missing or no data)"],
         )
     return result
+
+
+# --- Smart Money Convergence Endpoint ---
+
+from src.scanner.smart_money import find_convergence
+
+
+@router.get("/smart-money/convergence")
+def smart_money_convergence():
+    """Find symbols where multiple smart money signals converge.
+
+    Combines dark pool, options flow, earnings, and momentum data.
+    Returns symbols with 2+ aligned signals, sorted by convergence score.
+    """
+    cache_key = "smart_money_convergence"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:  # 5 min cache
+        return cached[1]
+
+    symbols = get_default_universe()
+
+    # Gather data from each feature (use cached scan results where available)
+    dp_results = []
+    dp_cached = _scan_cache.get("dp_scan_20_20")
+    if dp_cached and time.time() - dp_cached[0] < 600:
+        dp_results = dp_cached[1]
+    else:
+        try:
+            dp_results = dp_screen(symbols, days=20, top_n=50)
+        except Exception:
+            pass
+
+    of_results = []
+    of_cached = _scan_cache.get("of_scan_20")
+    if of_cached and time.time() - of_cached[0] < 600:
+        of_results = of_cached[1]
+
+    earn_results = []
+    earn_cached = _scan_cache.get("earnings_whisper_14_0")
+    if earn_cached and time.time() - earn_cached[0] < 600:
+        earn_results = earn_cached[1]
+    else:
+        try:
+            earn_results = screen_earnings(symbols, days_ahead=14)
+        except Exception:
+            pass
+
+    mom_results = []
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    if mom_cached and time.time() - mom_cached[0] < 300:
+        mom_results = mom_cached[1]
+
+    results = find_convergence(dp_results, of_results, earn_results, mom_results)
+    _scan_cache[cache_key] = (time.time(), results)
+    return results

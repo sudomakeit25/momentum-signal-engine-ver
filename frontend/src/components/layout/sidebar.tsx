@@ -27,6 +27,7 @@ import {
   Calendar,
   Send,
   Layers,
+  Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
   { href: "/sectors", label: "Sectors", icon: TrendingUp },
   { href: "/correlation", label: "Correlation", icon: Grid3x3 },
   { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
+  { href: "/smart-money", label: "Smart Money", icon: Target },
   { href: "/options-flow", label: "Options Flow", icon: Activity },
   { href: "/dark-pool", label: "Dark Pool", icon: Layers },
   { href: "/earnings", label: "Earnings", icon: Calendar },
