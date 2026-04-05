@@ -51,11 +51,16 @@ def _save_users(users: dict[str, dict]) -> bool:
 
 def register(email: str, password: str, name: str = "") -> dict:
     """Register a new user. Returns user dict or error."""
+    import re
     email = email.lower().strip()
     if not email or not password:
         return {"error": "Email and password required"}
+    if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        return {"error": "Invalid email format"}
     if len(password) < 6:
         return {"error": "Password must be at least 6 characters"}
+    if name and len(name) > 100:
+        return {"error": "Name too long"}
 
     users = _load_users()
     if email in users:

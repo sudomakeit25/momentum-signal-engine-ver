@@ -17,6 +17,26 @@ logger = logging.getLogger("mse.regime")
 _cache = Cache()
 
 
+def _default_regime() -> dict:
+    """Return a default neutral regime when data is unavailable."""
+    return {
+        "regime": "unknown",
+        "confidence_adjustment": 1.0,
+        "description": "Unable to determine market regime (insufficient data).",
+        "components": {
+            "trend_strength": 0,
+            "trend_direction": "unknown",
+            "volatility": 0,
+            "volatility_level": "unknown",
+            "breadth": 0,
+            "momentum": 0,
+        },
+        "recommendation": {"bias": "neutral", "position_size": "reduced", "stop_width": "normal"},
+        "spy_price": 0,
+        "spy_change_20d": 0,
+    }
+
+
 def detect_regime(days: int = 100) -> dict:
     """Detect current market regime from SPY data.
 

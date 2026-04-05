@@ -1,6 +1,7 @@
 """FastAPI routes for the Momentum Signal Engine."""
 
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Query
 
@@ -11,6 +12,8 @@ import pandas as pd
 # In-memory cache for scan results (avoids full recomputation)
 _scan_cache: dict[str, tuple[float, list]] = {}
 _SCAN_CACHE_TTL = 120  # seconds
+_CACHE_TTL_MED = 300   # 5 min
+_CACHE_TTL_LONG = 600  # 10 min
 
 from src.data.models import (
     BacktestResult, ChartBar, ChartData, ChartPattern, PositionSize,
@@ -113,7 +116,12 @@ def get_signals(
 def get_symbol_signals(symbol: str):
     """Get signals for a specific stock."""
     df = client.get_bars(symbol.upper(), days=200)
-    return generate_signals(df, symbol.upper())
+    if df is None or len(df) < 50:
+        return []
+    try:
+        return generate_signals(df, symbol.upper())
+    except Exception:
+        return []
 
 
 @router.get("/chart/{symbol}", response_model=ChartData)
@@ -124,6 +132,8 @@ def chart_data(
     """Get OHLCV + indicators for charting."""
     symbol = symbol.upper()
     df = client.get_bars(symbol, days=days)
+    if df is None or len(df) < 10:
+        return ChartData(symbol=symbol, bars=[], signals=[], technical_analysis=None)
     df = add_all_indicators(df)
     vwap_series = vwap(df)
     df["vwap_val"] = vwap_series
@@ -631,7 +641,7 @@ def set_notification_config(
     min_confidence: float = Query(default=0.6, ge=0, le=1),
 ):
     """Save notification preferences."""
-    from datetime import datetime, timezone
+    from datetime import timezone
 
     # Record consent timestamp when user opts in
     existing = load_notification_config()
@@ -668,7 +678,6 @@ def test_sms(
         return {"status": "error", "message": "SMS consent not given. Please opt in first."}
 
     from src.data.models import Signal, SignalAction, SetupType
-    from datetime import datetime
 
     test_signal = Signal(
         symbol="AAPL",
@@ -780,7 +789,6 @@ def earnings_whisper(
 @router.get("/earnings/conviction/{symbol}", response_model=EarningsConviction)
 def earnings_conviction(symbol: str):
     """Get earnings conviction score for a single symbol."""
-    from datetime import datetime
     events = get_upcoming_earnings([symbol.upper()], days_ahead=30)
     if not events:
         return EarningsConviction(
