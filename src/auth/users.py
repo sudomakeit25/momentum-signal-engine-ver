@@ -12,6 +12,9 @@ from config.settings import settings
 logger = logging.getLogger("mse.auth")
 
 _USERS_KEY = "mse:users"
+_LOGIN_ATTEMPTS_KEY = "mse:login_attempts"
+_MAX_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 900  # 15 minutes
 
 
 def _get_redis():
@@ -78,19 +81,87 @@ def register(email: str, password: str, name: str = "") -> dict:
 
 
 def login(email: str, password: str) -> dict:
-    """Authenticate a user. Returns user dict with token or error."""
+    """Authenticate a user. Returns user dict with token or error.
+
+    Rate limited: max 5 attempts per email per 15 minutes.
+    """
     email = email.lower().strip()
+
+    # Check rate limit
+    locked, remaining = _check_rate_limit(email)
+    if locked:
+        return {"error": f"Too many login attempts. Try again in {remaining} minutes."}
+
     users = _load_users()
     user = users.get(email)
 
     if not user:
+        _record_attempt(email)
         return {"error": "Invalid email or password"}
 
     if not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+        _record_attempt(email)
         return {"error": "Invalid email or password"}
 
+    # Clear attempts on successful login
+    _clear_attempts(email)
     token = _create_token(user["id"], email)
     return {"user_id": user["id"], "email": email, "name": user.get("name", ""), "token": token}
+
+
+def _check_rate_limit(email: str) -> tuple[bool, int]:
+    """Check if login is rate limited. Returns (locked, minutes_remaining)."""
+    redis = _get_redis()
+    if not redis:
+        return False, 0
+    try:
+        data = redis.get(f"{_LOGIN_ATTEMPTS_KEY}:{email}")
+        if not data:
+            return False, 0
+        import json
+        attempts = json.loads(data) if isinstance(data, str) else data
+        now = datetime.now(timezone.utc).timestamp()
+        # Filter to attempts within the lockout window
+        recent = [t for t in attempts if now - t < _LOCKOUT_SECONDS]
+        if len(recent) >= _MAX_ATTEMPTS:
+            oldest = min(recent)
+            remaining = int((_LOCKOUT_SECONDS - (now - oldest)) / 60) + 1
+            return True, remaining
+        return False, 0
+    except Exception:
+        return False, 0
+
+
+def _record_attempt(email: str) -> None:
+    """Record a failed login attempt."""
+    redis = _get_redis()
+    if not redis:
+        return
+    try:
+        import json
+        key = f"{_LOGIN_ATTEMPTS_KEY}:{email}"
+        data = redis.get(key)
+        attempts = json.loads(data) if data else []
+        if isinstance(attempts, str):
+            attempts = json.loads(attempts)
+        now = datetime.now(timezone.utc).timestamp()
+        # Keep only recent attempts
+        attempts = [t for t in attempts if now - t < _LOCKOUT_SECONDS]
+        attempts.append(now)
+        redis.set(key, json.dumps(attempts))
+    except Exception as e:
+        logger.debug("Failed to record login attempt: %s", e)
+
+
+def _clear_attempts(email: str) -> None:
+    """Clear login attempts after successful login."""
+    redis = _get_redis()
+    if not redis:
+        return
+    try:
+        redis.delete(f"{_LOGIN_ATTEMPTS_KEY}:{email}")
+    except Exception:
+        pass
 
 
 def verify_token(token: str) -> dict | None:
