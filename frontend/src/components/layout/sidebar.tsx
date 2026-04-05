@@ -133,12 +133,16 @@ export function Sidebar() {
         <div className="space-y-3 border-t border-border p-4">
           {mounted && isAuthenticated && user ? (
             <div className="flex items-center justify-between rounded-md px-3 py-2">
-              <div className="flex items-center gap-2">
+              <Link
+                href="/account"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+              >
                 <User className="h-4 w-4 text-cyan-400" />
                 <span className="text-xs font-medium text-zinc-300 truncate max-w-[120px]">
                   {user.name || user.email}
                 </span>
-              </div>
+              </Link>
               <button
                 onClick={logout}
                 className="text-zinc-500 hover:text-zinc-300 transition-colors"

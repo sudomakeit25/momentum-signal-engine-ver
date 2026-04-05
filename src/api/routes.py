@@ -1143,7 +1143,64 @@ def login(
 @router.get("/auth/me")
 def auth_me(user: dict = Depends(get_current_user)):
     """Get current user info."""
-    return {"user_id": user["user_id"], "email": user["email"]}
+    from src.auth.users import _load_users
+    users = _load_users()
+    full_user = users.get(user["email"], {})
+    return {
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "name": full_user.get("name", ""),
+        "created_at": full_user.get("created_at", ""),
+    }
+
+
+@router.post("/auth/change-password")
+def change_password(
+    current_password: str = Query(...),
+    new_password: str = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Change password for the authenticated user."""
+    import bcrypt
+    from src.auth.users import _load_users, _save_users
+
+    if len(new_password) < 6:
+        return {"status": "error", "message": "New password must be at least 6 characters"}
+
+    users = _load_users()
+    full_user = users.get(user["email"])
+    if not full_user:
+        return {"status": "error", "message": "User not found"}
+
+    if not bcrypt.checkpw(current_password.encode(), full_user["password_hash"].encode()):
+        return {"status": "error", "message": "Current password is incorrect"}
+
+    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    full_user["password_hash"] = new_hash
+    users[user["email"]] = full_user
+    _save_users(users)
+
+    return {"status": "ok", "message": "Password updated"}
+
+
+@router.post("/auth/update-name")
+def update_name(
+    name: str = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Update display name for the authenticated user."""
+    from src.auth.users import _load_users, _save_users
+
+    users = _load_users()
+    full_user = users.get(user["email"])
+    if not full_user:
+        return {"status": "error", "message": "User not found"}
+
+    full_user["name"] = name.strip()
+    users[user["email"]] = full_user
+    _save_users(users)
+
+    return {"status": "ok", "name": name.strip()}
 
 
 # --- Per-user Data Endpoints ---
