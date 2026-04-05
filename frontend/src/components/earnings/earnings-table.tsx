@@ -5,7 +5,7 @@ import type { EarningsConviction } from "@/types/api";
 import { ConvictionBadge } from "./conviction-badge";
 import { cn } from "@/lib/utils";
 
-function SentimentChip({ value, type }: { value: string; type: "insider" | "revision" }) {
+function SentimentChip({ value }: { value: string }) {
   const colorMap: Record<string, string> = {
     buying: "text-emerald-400",
     selling: "text-red-400",
@@ -92,10 +92,10 @@ export function EarningsTable({ results }: { results: EarningsConviction[] }) {
                   <SurpriseBar values={r.eps_surprise_history} />
                 </td>
                 <td className="px-4 py-3">
-                  <SentimentChip value={r.insider_sentiment} type="insider" />
+                  <SentimentChip value={r.insider_sentiment}  />
                 </td>
                 <td className="px-4 py-3">
-                  <SentimentChip value={r.analyst_revisions} type="revision" />
+                  <SentimentChip value={r.analyst_revisions}  />
                 </td>
                 <td className="px-4 py-3 max-w-[200px] truncate text-xs text-zinc-500">
                   {r.alert_reasons.length > 0 ? r.alert_reasons[0] : "-"}

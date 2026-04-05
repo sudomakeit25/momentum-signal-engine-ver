@@ -24,7 +24,6 @@ export default function OptionsFlowPage() {
   function handleLookup() {
     if (lookupSymbol.trim()) {
       setActiveSymbol(lookupSymbol.trim().toUpperCase());
-      setSelectedResult(null);
     }
   }
 

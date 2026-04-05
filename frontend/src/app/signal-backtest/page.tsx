@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { BarChart3 } from "lucide-react";
-import Link from "next/link";
 import { useSignalBacktest } from "@/hooks/use-journal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -263,13 +262,13 @@ export default function SignalBacktestPage() {
                           )}
                         >
                           {(s.pnl_pct as number) >= 0 ? "+" : ""}
-                          {s.pnl_pct}%
+                          {String(s.pnl_pct)}%
                         </td>
                         <td className="px-3 py-1.5 text-right font-mono text-zinc-400">
-                          {s.r_multiple}R
+                          {String(s.r_multiple)}R
                         </td>
                         <td className="px-3 py-1.5 text-right text-zinc-500">
-                          {s.bars_to_exit as number}
+                          {String(s.bars_to_exit)}
                         </td>
                       </tr>
                     ))}

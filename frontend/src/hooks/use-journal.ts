@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, apiPost, apiDelete } from "@/lib/api";
+import { apiFetch, apiPost } from "@/lib/api";
 
 export interface Trade {
   id: string;

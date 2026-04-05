@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { apiPost, apiFetch } from "@/lib/api";
+import { apiPost } from "@/lib/api";
 
 const TOKEN_KEY = "mse-auth-token";
 const USER_KEY = "mse-auth-user";
