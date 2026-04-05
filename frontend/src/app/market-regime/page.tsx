@@ -1,6 +1,7 @@
 "use client";
 
 import { Gauge } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMarketRegime } from "@/hooks/use-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,8 @@ const REGIME_COLORS: Record<string, string> = {
 };
 
 export default function MarketRegimePage() {
-  const { data, isLoading } = useMarketRegime();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useMarketRegime();
   const regime = data as Record<string, unknown> | undefined;
   const components = regime?.components as Record<string, unknown> | undefined;
   const rec = regime?.recommendation as Record<string, string> | undefined;
@@ -33,7 +35,12 @@ export default function MarketRegimePage() {
         Classifies the current market using SPY trend strength, volatility, breadth, and momentum. Adjusts signal confidence recommendations based on conditions.
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["market-regime"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <Skeleton className="h-40 w-full bg-zinc-800" />
       ) : regime ? (
         <div className="space-y-4">

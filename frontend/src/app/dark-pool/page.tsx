@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 export default function DarkPoolPage() {
   const [days, setDays] = useState(20);
   const queryClient = useQueryClient();
-  const { data, isLoading, dataUpdatedAt } = useDarkPoolScan(20, days);
+  const { data, isLoading, isError, dataUpdatedAt } = useDarkPoolScan(20, days);
 
   const updatedAt = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString()
@@ -70,7 +70,12 @@ export default function DarkPoolPage() {
         RegSHO daily reports.
       </div>
 
-      {isLoading && !data ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load dark pool data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["dark-pool-scan"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading && !data ? (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
             <svg

@@ -2,6 +2,7 @@
 
 import { Trophy } from "lucide-react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLeaderboard } from "@/hooks/use-leaderboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -73,7 +74,8 @@ function SetupRow({
 }
 
 export default function LeaderboardPage() {
-  const { data, isLoading } = useLeaderboard();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useLeaderboard();
   const stats = data?.stats;
   const bySetup = data?.by_setup || {};
   const recent = data?.recent || [];
@@ -99,7 +101,12 @@ export default function LeaderboardPage() {
         target/stop levels. This page shows real, unedited results.
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["leaderboard"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (

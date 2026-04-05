@@ -17,7 +17,7 @@ export default function OptionsFlowPage() {
   const [activeSymbol, setActiveSymbol] = useState("");
   const queryClient = useQueryClient();
 
-  const { data: scanData, isLoading: scanLoading } = useOptionsFlowScan(20);
+  const { data: scanData, isLoading: scanLoading, isError: scanError } = useOptionsFlowScan(20);
   const { data: symbolData, isLoading: symbolLoading } =
     useOptionsFlow(activeSymbol);
 
@@ -147,7 +147,12 @@ export default function OptionsFlowPage() {
         Universe Scan
       </h2>
 
-      {scanLoading && !scanData ? (
+      {scanError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["options-flow-scan"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : scanLoading && !scanData ? (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
             <svg

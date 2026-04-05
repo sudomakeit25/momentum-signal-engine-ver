@@ -1,12 +1,14 @@
 "use client";
 
 import { TrendingUp } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSectorFlow } from "@/hooks/use-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function SectorFlowPage() {
-  const { data, isLoading } = useSectorFlow();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useSectorFlow();
   const sectors = (data || []) as Record<string, unknown>[];
 
   return (
@@ -21,7 +23,12 @@ export default function SectorFlowPage() {
         Aggregates dark pool accumulation, options flow sentiment, and momentum signals by sector to detect rotation. Inflow = money moving in. Outflow = money moving out.
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["sector-flow"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-20 w-full bg-zinc-800" />)}</div>
       ) : sectors.length > 0 ? (
         <div className="space-y-2">

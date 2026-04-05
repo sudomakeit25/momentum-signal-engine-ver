@@ -12,7 +12,7 @@ export default function EarningsPage() {
   const [daysAhead, setDaysAhead] = useState(14);
   const [minConviction, setMinConviction] = useState(0);
   const queryClient = useQueryClient();
-  const { data, isLoading, dataUpdatedAt } = useEarningsWhisper(
+  const { data, isLoading, isError, dataUpdatedAt } = useEarningsWhisper(
     daysAhead,
     minConviction
   );
@@ -92,7 +92,12 @@ export default function EarningsPage() {
         indicate stronger setups going into earnings. Requires FMP API key.
       </div>
 
-      {isLoading && !data ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["earnings-whisper"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading && !data ? (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
             <svg

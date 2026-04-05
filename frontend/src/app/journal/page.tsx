@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BookMarked, Plus, Download, X } from "lucide-react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useTrades,
   useJournalStats,
@@ -137,7 +138,8 @@ function TradeRow({
 }
 
 export default function JournalPage() {
-  const { data: trades, isLoading: tradesLoading } = useTrades();
+  const queryClient = useQueryClient();
+  const { data: trades, isLoading: tradesLoading, isError: tradesError } = useTrades();
   const { data: stats } = useJournalStats();
   const addTrade = useAddTrade();
   const closeTrade = useCloseTrade();
@@ -259,7 +261,12 @@ export default function JournalPage() {
       )}
 
       {/* Trades Table */}
-      {tradesLoading ? (
+      {tradesError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["journal-trades"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : tradesLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-10 w-full bg-zinc-800" />

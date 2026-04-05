@@ -1,12 +1,14 @@
 "use client";
 
 import { Newspaper } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNewsFeed } from "@/hooks/use-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function NewsPage() {
-  const { data, isLoading } = useNewsFeed();
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useNewsFeed();
   const market = data?.market_sentiment as Record<string, unknown> | undefined;
   const articles = (data?.articles || []) as Record<string, unknown>[];
 
@@ -40,7 +42,12 @@ export default function NewsPage() {
         </div>
       )}
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["news-feed"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-16 w-full bg-zinc-800" />)}</div>
       ) : articles.length > 0 ? (
         <div className="space-y-2">

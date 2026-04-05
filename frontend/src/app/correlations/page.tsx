@@ -2,12 +2,14 @@
 
 import { GitCompareArrows } from "lucide-react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCorrelationScan } from "@/hooks/use-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function CorrelationsPage() {
-  const { data, isLoading } = useCorrelationScan(60);
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useCorrelationScan(60);
   const pairs = (data || []) as Record<string, unknown>[];
 
   return (
@@ -22,7 +24,12 @@ export default function CorrelationsPage() {
         Monitors rolling correlations between historically correlated pairs. When correlation breaks down or returns diverge significantly, it may signal a pairs trading opportunity.
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["correlation-scan"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-16 w-full bg-zinc-800" />)}</div>
       ) : pairs.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border border-zinc-800">

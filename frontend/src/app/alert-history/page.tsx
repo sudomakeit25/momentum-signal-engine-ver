@@ -2,12 +2,14 @@
 
 import { Bell } from "lucide-react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAlertHistory } from "@/hooks/use-journal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export default function AlertHistoryPage() {
-  const { data, isLoading } = useAlertHistory(200);
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useAlertHistory(200);
 
   return (
     <div className="space-y-4">
@@ -24,7 +26,12 @@ export default function AlertHistoryPage() {
         led to profitable moves by comparing entry prices with current prices.
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load data.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["alert-history"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-10 w-full bg-zinc-800" />

@@ -48,7 +48,7 @@ export default function ScannerPage() {
     window.addEventListener("mse:refresh", handler);
     return () => window.removeEventListener("mse:refresh", handler);
   }, [queryClient]);
-  const { data, isLoading, dataUpdatedAt } = useScan(
+  const { data, isLoading, isError, dataUpdatedAt } = useScan(
     { top, min_price: minPrice, max_price: maxPrice, min_volume: minVolume },
     autoRefresh
   );
@@ -148,7 +148,12 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {isLoading && !data ? (
+      {isError ? (
+        <div className="rounded-lg border border-red-800/30 bg-red-900/10 p-8 text-center">
+          <p className="text-sm text-zinc-300">Failed to load scanner data. The backend may be starting up.</p>
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ["scan"] })} className="mt-3 text-xs text-cyan-400 hover:underline">Try again</button>
+        </div>
+      ) : isLoading && !data ? (
         <div className="space-y-4">
           <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
             <svg className="h-5 w-5 animate-spin text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
