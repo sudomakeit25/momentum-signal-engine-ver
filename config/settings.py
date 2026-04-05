@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     smtp_email: str = ""  # e.g. "yourname@gmail.com"
     smtp_password: str = ""  # Gmail app password (not your login password)
 
+    # Upstash Redis (persistent config storage)
+    upstash_redis_rest_url: str = ""
+    upstash_redis_rest_token: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -42,3 +42,4 @@ urllib3==2.6.3
 uvicorn==0.40.0
 websockets==16.0
 twilio
+upstash-redis

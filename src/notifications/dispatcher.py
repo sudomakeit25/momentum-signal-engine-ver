@@ -12,9 +12,27 @@ import requests as http_requests
 
 logger = logging.getLogger("mse.notifications")
 
-# Persistent config file path (survives restarts on disk-based deploys)
+# File-based fallback for local dev
 _CONFIG_PATH = Path(".notification_config.json")
 _config_lock = threading.Lock()
+
+# Redis key for notification config
+_REDIS_KEY = "mse:notification_config"
+
+
+def _get_redis():
+    """Get Upstash Redis client, or None if not configured."""
+    from config.settings import settings
+    if settings.upstash_redis_rest_url and settings.upstash_redis_rest_token:
+        try:
+            from upstash_redis import Redis
+            return Redis(
+                url=settings.upstash_redis_rest_url,
+                token=settings.upstash_redis_rest_token,
+            )
+        except Exception as e:
+            logger.warning("Redis connection failed, falling back to file: %s", e)
+    return None
 
 # Email-to-SMS carrier gateways (phone_number@gateway → delivers as SMS)
 CARRIER_GATEWAYS: dict[str, str] = {
@@ -76,7 +94,18 @@ class NotificationConfig:
 
 
 def load_config() -> NotificationConfig:
-    """Load config from disk, or return defaults."""
+    """Load config from Redis (preferred) or disk fallback."""
+    redis = _get_redis()
+    if redis:
+        try:
+            data = redis.get(_REDIS_KEY)
+            if data:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                return NotificationConfig.from_dict(data)
+        except Exception as e:
+            logger.warning("Redis load failed, falling back to file: %s", e)
+
     with _config_lock:
         if _CONFIG_PATH.exists():
             try:
@@ -84,13 +113,23 @@ def load_config() -> NotificationConfig:
                 return NotificationConfig.from_dict(data)
             except Exception:
                 pass
-        return NotificationConfig()
+    return NotificationConfig()
 
 
 def save_config(config: NotificationConfig) -> None:
-    """Persist config to disk."""
+    """Persist config to Redis (preferred) and disk fallback."""
+    config_json = json.dumps(config.to_dict(), indent=2)
+
+    redis = _get_redis()
+    if redis:
+        try:
+            redis.set(_REDIS_KEY, config_json)
+            logger.info("Notification config saved to Redis")
+        except Exception as e:
+            logger.warning("Redis save failed, falling back to file: %s", e)
+
     with _config_lock:
-        _CONFIG_PATH.write_text(json.dumps(config.to_dict(), indent=2))
+        _CONFIG_PATH.write_text(config_json)
 
 
 def send_webhook(url: str, platform: str, signals: list) -> bool:
