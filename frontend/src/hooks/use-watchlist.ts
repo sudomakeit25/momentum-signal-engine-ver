@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { apiPost } from "@/lib/api";
 
 const STORAGE_KEY = "mse-watchlist";
 
@@ -13,11 +14,17 @@ function load(): string[] {
   }
 }
 
+function syncToServer(symbols: string[]) {
+  if (symbols.length === 0) return;
+  apiPost("/watchlist/sync", { symbols: symbols.join(",") }).catch(() => {});
+}
+
 export function useWatchlist() {
   const [symbols, setSymbols] = useState<string[]>(load);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(symbols));
+    syncToServer(symbols);
   }, [symbols]);
 
   const toggle = useCallback((symbol: string) => {
