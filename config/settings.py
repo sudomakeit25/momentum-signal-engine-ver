@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
 
+    # Polygon.io (Options Flow)
+    polygon_api_key: str = ""
+
+    # Financial Modeling Prep (Earnings)
+    fmp_api_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

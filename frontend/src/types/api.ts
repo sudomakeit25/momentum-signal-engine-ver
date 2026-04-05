@@ -143,3 +143,83 @@ export interface ChartData {
   signals: Signal[];
   technical_analysis: TechnicalAnalysis | null;
 }
+
+// --- Dark Pool ---
+
+export interface DarkPoolEntry {
+  symbol: string;
+  date: string;
+  short_volume: number;
+  short_exempt_volume: number;
+  total_volume: number;
+  short_pct: number;
+}
+
+export interface DarkPoolResult {
+  symbol: string;
+  entries: DarkPoolEntry[];
+  avg_short_pct: number;
+  recent_short_pct: number;
+  trend: "accumulating" | "distributing" | "neutral";
+  trend_strength: number;
+  price_change_pct: number;
+  alert_reasons: string[];
+}
+
+// --- Earnings Whisper ---
+
+export interface EarningsEvent {
+  symbol: string;
+  date: string;
+  eps_estimate: number | null;
+  eps_actual: number | null;
+  revenue_estimate: number | null;
+  revenue_actual: number | null;
+  time: string;
+}
+
+export interface InsiderTrade {
+  symbol: string;
+  insider_name: string;
+  title: string;
+  transaction_type: "purchase" | "sale";
+  shares: number;
+  price: number;
+  total_value: number;
+  filing_date: string;
+}
+
+export interface EarningsConviction {
+  symbol: string;
+  earnings_date: string;
+  conviction_score: number;
+  eps_surprise_history: number[];
+  insider_sentiment: "buying" | "selling" | "neutral";
+  analyst_revisions: "up" | "down" | "stable";
+  components: Record<string, number>;
+  alert_reasons: string[];
+}
+
+// --- Options Flow ---
+
+export interface OptionsContract {
+  symbol: string;
+  expiration: string;
+  strike: number;
+  contract_type: "call" | "put";
+  volume: number;
+  open_interest: number;
+  vol_oi_ratio: number;
+  implied_volatility: number | null;
+  last_price: number | null;
+}
+
+export interface OptionsFlowResult {
+  symbol: string;
+  unusual_contracts: OptionsContract[];
+  put_call_ratio: number;
+  total_call_volume: number;
+  total_put_volume: number;
+  flow_sentiment: "bullish" | "bearish" | "neutral";
+  alert_reasons: string[];
+}

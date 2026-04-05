@@ -691,3 +691,47 @@ def test_sms(
         ok = send_sms(to, [test_signal])
 
     return {"status": "sent" if ok else "error", "to": to}
+
+
+# --- Dark Pool Endpoints ---
+
+from src.data.models import DarkPoolResult
+from src.scanner.dark_pool import analyze_symbol as dp_analyze, screen_universe as dp_screen
+
+
+@router.get("/dark-pool/scan", response_model=list[DarkPoolResult])
+def dark_pool_scan(
+    top: int = Query(default=20, ge=1, le=50),
+    days: int = Query(default=20, ge=5, le=60),
+):
+    """Scan the default universe for dark pool activity."""
+    cache_key = f"dp_scan_{top}_{days}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 300:  # 5 min cache
+        return cached[1]
+
+    symbols = get_default_universe()
+    results = dp_screen(symbols, days=days, top_n=top)
+    _scan_cache[cache_key] = (time.time(), results)
+    return results
+
+
+@router.get("/dark-pool/{symbol}", response_model=DarkPoolResult)
+def dark_pool_symbol(
+    symbol: str,
+    days: int = Query(default=20, ge=5, le=60),
+):
+    """Get dark pool activity for a single symbol."""
+    result = dp_analyze(symbol.upper(), days=days)
+    if result is None:
+        return DarkPoolResult(
+            symbol=symbol.upper(),
+            entries=[],
+            avg_short_pct=0,
+            recent_short_pct=0,
+            trend="neutral",
+            trend_strength=0,
+            price_change_pct=0,
+            alert_reasons=[],
+        )
+    return result

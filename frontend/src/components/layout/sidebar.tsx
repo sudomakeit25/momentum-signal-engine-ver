@@ -26,6 +26,7 @@ import {
   ShieldAlert,
   Calendar,
   Send,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +44,7 @@ const NAV_ITEMS = [
   { href: "/sectors", label: "Sectors", icon: TrendingUp },
   { href: "/correlation", label: "Correlation", icon: Grid3x3 },
   { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
+  { href: "/dark-pool", label: "Dark Pool", icon: Layers },
   { href: "/earnings", label: "Earnings", icon: Calendar },
   { href: "/notifications", label: "Notifications", icon: Send },
   { href: "/guide", label: "Guide", icon: BookOpen },

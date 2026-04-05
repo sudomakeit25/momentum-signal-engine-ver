@@ -158,3 +158,79 @@ class BacktestResult(BaseModel):
     total_return_pct: float
     max_drawdown_pct: float
     trades: list[dict]
+
+
+# --- Dark Pool Models ---
+
+class DarkPoolEntry(BaseModel):
+    symbol: str
+    date: datetime
+    short_volume: int
+    short_exempt_volume: int
+    total_volume: int
+    short_pct: float
+
+class DarkPoolResult(BaseModel):
+    symbol: str
+    entries: list[DarkPoolEntry]
+    avg_short_pct: float
+    recent_short_pct: float
+    trend: str  # "accumulating" | "distributing" | "neutral"
+    trend_strength: float  # 0-1
+    price_change_pct: float
+    alert_reasons: list[str]
+
+
+# --- Earnings Whisper Models ---
+
+class EarningsEvent(BaseModel):
+    symbol: str
+    date: datetime
+    eps_estimate: float | None = None
+    eps_actual: float | None = None
+    revenue_estimate: float | None = None
+    revenue_actual: float | None = None
+    time: str = "unknown"  # "bmo" | "amc" | "unknown"
+
+class InsiderTrade(BaseModel):
+    symbol: str
+    insider_name: str
+    title: str
+    transaction_type: str  # "purchase" | "sale"
+    shares: int
+    price: float
+    total_value: float
+    filing_date: datetime
+
+class EarningsConviction(BaseModel):
+    symbol: str
+    earnings_date: datetime
+    conviction_score: float  # 0-100
+    eps_surprise_history: list[float]
+    insider_sentiment: str  # "buying" | "selling" | "neutral"
+    analyst_revisions: str  # "up" | "down" | "stable"
+    components: dict
+    alert_reasons: list[str]
+
+
+# --- Options Flow Models ---
+
+class OptionsContract(BaseModel):
+    symbol: str
+    expiration: datetime
+    strike: float
+    contract_type: str  # "call" | "put"
+    volume: int
+    open_interest: int
+    vol_oi_ratio: float
+    implied_volatility: float | None = None
+    last_price: float | None = None
+
+class OptionsFlowResult(BaseModel):
+    symbol: str
+    unusual_contracts: list[OptionsContract]
+    put_call_ratio: float
+    total_call_volume: int
+    total_put_volume: int
+    flow_sentiment: str  # "bullish" | "bearish" | "neutral"
+    alert_reasons: list[str]
