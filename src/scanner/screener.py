@@ -46,11 +46,12 @@ def scan_universe(
     max_price = max_price or settings.scan_max_price
     min_volume = min_volume or settings.scan_min_volume
 
-    # Fetch SPY for relative strength comparison
-    spy_df = client.get_bars("SPY", days=200)
-
-    # Fetch all symbol bars in one batch
-    bars_map = client.get_multi_bars(symbols, days=200)
+    # Fetch SPY and all symbol bars in parallel
+    with ThreadPoolExecutor(max_workers=2) as fetch_pool:
+        spy_future = fetch_pool.submit(client.get_bars, "SPY", days=200)
+        bars_future = fetch_pool.submit(client.get_multi_bars, symbols, days=200)
+        spy_df = spy_future.result()
+        bars_map = bars_future.result()
 
     results: list[ScanResult] = []
 
