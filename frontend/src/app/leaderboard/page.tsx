@@ -114,33 +114,39 @@ export default function LeaderboardPage() {
             ))}
           </div>
         </div>
-      ) : stats ? (
+      ) : data ? (
         <>
           {/* Top Stats */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <BigStat
               label="Win Rate"
-              value={`${stats.win_rate}%`}
+              value={`${stats?.win_rate ?? 0}%`}
               color={
-                stats.win_rate >= 50 ? "text-emerald-400" : "text-red-400"
+                (stats?.win_rate ?? 0) >= 50 ? "text-emerald-400" : data.resolved === 0 ? "text-zinc-400" : "text-red-400"
               }
             />
             <BigStat
               label="Signals Resolved"
-              value={data?.resolved || 0}
-              sub={`${data?.pending || 0} pending`}
+              value={data.resolved ?? 0}
+              sub={`${data.pending ?? 0} pending`}
             />
             <BigStat
               label="Wins"
-              value={stats.total_wins}
+              value={stats?.total_wins ?? 0}
               color="text-emerald-400"
             />
             <BigStat
               label="Losses"
-              value={stats.total_losses}
+              value={stats?.total_losses ?? 0}
               color="text-red-400"
             />
           </div>
+
+          {data.resolved === 0 && (data.pending ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-800/30 bg-amber-900/10 p-4 text-center text-sm text-zinc-400">
+              {data.pending} signals are being tracked. Outcomes are checked after 10 trading days. Win rate will appear once signals are resolved.
+            </div>
+          )}
 
           {/* By Setup Type */}
           {sortedSetups.length > 0 && (
