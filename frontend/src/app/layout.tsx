@@ -20,6 +20,7 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "Momentum Signal Engine",
   description: "Stock trading analysis platform for high-probability momentum setups",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({

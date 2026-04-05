@@ -45,6 +45,8 @@ import {
   Crosshair,
   PieChart,
   FileText,
+  Globe,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -90,6 +92,8 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/options-builder", label: "Options Builder", icon: Wrench },
       { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
       { href: "/market-breadth", label: "Market Breadth", icon: BarChart2 },
+      { href: "/global-markets", label: "Global Markets", icon: Globe },
+      { href: "/compare", label: "Compare Stocks", icon: ArrowLeftRight },
       { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
     ],
   },

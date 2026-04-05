@@ -1,0 +1,16 @@
+{
+  "name": "Momentum Signal Engine",
+  "short_name": "MSE",
+  "description": "Stock trading analysis platform for high-probability momentum setups",
+  "start_url": "/scanner",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#22d3ee",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

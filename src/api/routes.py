@@ -2025,3 +2025,140 @@ PRODID:-//MSE//Earnings Calendar//EN
 {cal_events}END:VCALENDAR"""
 
     return Response(content=ical, media_type="text/calendar")
+
+
+# --- Order Tools (57-59) ---
+
+from src.trading.order_tools import (
+    get_dca_schedules, add_dca_schedule, remove_dca_schedule,
+    get_trailing_stops, add_trailing_stop, check_trailing_stops,
+    build_bracket_order,
+)
+
+
+@router.get("/trading/dca")
+def dca_list():
+    """Get DCA schedules."""
+    return get_dca_schedules()
+
+
+@router.post("/trading/dca")
+def dca_add(
+    symbol: str = Query(...),
+    amount: float = Query(...),
+    frequency: str = Query(default="weekly"),
+):
+    """Add a DCA schedule."""
+    return add_dca_schedule(symbol, amount, frequency)
+
+
+@router.delete("/trading/dca/{schedule_id}")
+def dca_remove(schedule_id: str):
+    """Remove a DCA schedule."""
+    ok = remove_dca_schedule(schedule_id)
+    return {"status": "removed" if ok else "error"}
+
+
+@router.get("/trading/trailing-stops")
+def trailing_stops_list():
+    """Get all trailing stops."""
+    return get_trailing_stops()
+
+
+@router.post("/trading/trailing-stop")
+def trailing_stop_add(
+    symbol: str = Query(...),
+    trail_pct: float = Query(...),
+    entry_price: float = Query(...),
+):
+    """Add a trailing stop."""
+    return add_trailing_stop(symbol, trail_pct, entry_price)
+
+
+@router.post("/trading/trailing-stops/check")
+def trailing_stops_check():
+    """Check all trailing stops against current prices."""
+    return check_trailing_stops()
+
+
+@router.post("/trading/bracket-order")
+def bracket_order(
+    symbol: str = Query(...),
+    qty: float = Query(...),
+    entry: float = Query(...),
+    stop_loss: float = Query(...),
+    take_profit: float = Query(...),
+):
+    """Submit a bracket order (entry + stop + target)."""
+    return build_bracket_order(symbol, qty, entry, stop_loss, take_profit)
+
+
+# --- Comparison & Global Markets (55, 63-64, 69) ---
+
+from src.scanner.comparison import (
+    compare_stocks, get_yield_curve, get_global_markets,
+    get_usage_stats, track_usage,
+)
+
+
+@router.get("/compare")
+def stock_compare(symbols: str = Query(..., description="Comma-separated symbols")):
+    """Compare stocks side by side."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return compare_stocks(sym_list)
+
+
+@router.get("/market/yield-curve")
+def yield_curve():
+    """Get treasury yield curve data."""
+    return get_yield_curve()
+
+
+@router.get("/market/global")
+def global_markets():
+    """Get global market dashboard."""
+    cache_key = "global_markets"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_MED:
+        return cached[1]
+    result = get_global_markets()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/analytics/usage")
+def usage_analytics():
+    """Get usage analytics."""
+    return get_usage_stats()
+
+
+# --- TradingView Webhook Receiver (#95) ---
+
+class WebhookPayload(PydanticBaseModel):
+    symbol: str = ""
+    action: str = ""
+    price: float = 0
+    message: str = ""
+
+
+@router.post("/webhook/tradingview")
+def tradingview_webhook(payload: WebhookPayload):
+    """Receive alerts from TradingView webhooks."""
+    from src.data.redis_store import log_alert
+
+    log_alert({
+        "symbol": payload.symbol.upper(),
+        "action": payload.action.upper(),
+        "entry": payload.price,
+        "confidence": 0,
+        "reason": f"TradingView: {payload.message}",
+        "sms_sent": False,
+        "webhook_sent": False,
+        "source": "tradingview",
+    })
+
+    # Optionally dispatch through our alert system
+    logger_name = logging.getLogger("mse.webhook")
+    logger_name.info("TradingView webhook: %s %s @ %s", payload.action, payload.symbol, payload.price)
+
+    return {"status": "received", "symbol": payload.symbol, "action": payload.action}
