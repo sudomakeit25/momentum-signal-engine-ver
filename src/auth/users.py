@@ -95,6 +95,7 @@ def login(email: str, password: str) -> dict:
     # Check rate limit
     locked, remaining = _check_rate_limit(email)
     if locked:
+        logger.warning("Login locked out for %s (%d min remaining)", email, remaining)
         return {"error": f"Too many login attempts. Try again in {remaining} minutes."}
 
     users = _load_users()
@@ -102,10 +103,12 @@ def login(email: str, password: str) -> dict:
 
     if not user:
         _record_attempt(email)
+        logger.warning("Login attempt for non-existent email: %s", email)
         return {"error": "Invalid email or password"}
 
     if not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
         _record_attempt(email)
+        logger.warning("Failed login attempt for: %s", email)
         return {"error": "Invalid email or password"}
 
     # Clear attempts on successful login
@@ -175,8 +178,10 @@ def verify_token(token: str) -> dict | None:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         return payload
     except jwt.ExpiredSignatureError:
+        logger.debug("Expired token used")
         return None
     except jwt.InvalidTokenError:
+        logger.warning("Invalid token attempted")
         return None
 
 

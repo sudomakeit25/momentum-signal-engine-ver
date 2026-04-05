@@ -34,6 +34,21 @@ export async function apiPost<T>(
   return res.json();
 }
 
+export async function apiPostJson<T>(
+  path: string,
+  body: Record<string, unknown>,
+  headers?: Record<string, string>
+): Promise<T> {
+  const url = new URL(path, API_BASE);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function apiDelete<T>(path: string): Promise<T> {
   const url = new URL(path, API_BASE);
   const res = await fetch(url.toString(), { method: "DELETE" });

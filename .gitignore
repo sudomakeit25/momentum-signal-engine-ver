@@ -1,5 +1,6 @@
 .env
 .cache/
+.notification_config.json
 __pycache__/
 *.pyc
 *.egg-info/

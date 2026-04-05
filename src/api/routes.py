@@ -1117,32 +1117,37 @@ def watchlist_sync(symbols: str = Query(..., description="Comma-separated symbol
 
 # --- Auth Endpoints ---
 
+from pydantic import BaseModel as PydanticBaseModel
 from src.auth.users import register as auth_register, login as auth_login
 from src.auth.deps import get_current_user, optional_user
 from src.data.redis_store import get_user_data, set_user_data
 from fastapi import Depends
 
 
+class AuthRequest(PydanticBaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+
+class PasswordChangeRequest(PydanticBaseModel):
+    current_password: str
+    new_password: str
+
+
 @router.post("/auth/register")
-def register(
-    email: str = Query(...),
-    password: str = Query(...),
-    name: str = Query(default=""),
-):
+def register(req: AuthRequest):
     """Register a new user."""
-    result = auth_register(email, password, name)
+    result = auth_register(req.email, req.password, req.name)
     if "error" in result:
         return {"status": "error", "message": result["error"]}
     return {"status": "ok", **result}
 
 
 @router.post("/auth/login")
-def login(
-    email: str = Query(...),
-    password: str = Query(...),
-):
+def login(req: AuthRequest):
     """Login and get a JWT token."""
-    result = auth_login(email, password)
+    result = auth_login(req.email, req.password)
     if "error" in result:
         return {"status": "error", "message": result["error"]}
     return {"status": "ok", **result}
@@ -1164,15 +1169,14 @@ def auth_me(user: dict = Depends(get_current_user)):
 
 @router.post("/auth/change-password")
 def change_password(
-    current_password: str = Query(...),
-    new_password: str = Query(...),
+    req: PasswordChangeRequest,
     user: dict = Depends(get_current_user),
 ):
     """Change password for the authenticated user."""
     import bcrypt
     from src.auth.users import _load_users, _save_users
 
-    if len(new_password) < 6:
+    if len(req.new_password) < 6:
         return {"status": "error", "message": "New password must be at least 6 characters"}
 
     users = _load_users()
@@ -1180,10 +1184,10 @@ def change_password(
     if not full_user:
         return {"status": "error", "message": "User not found"}
 
-    if not bcrypt.checkpw(current_password.encode(), full_user["password_hash"].encode()):
+    if not bcrypt.checkpw(req.current_password.encode(), full_user["password_hash"].encode()):
         return {"status": "error", "message": "Current password is incorrect"}
 
-    new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    new_hash = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
     full_user["password_hash"] = new_hash
     users[user["email"]] = full_user
     _save_users(users)
@@ -1191,9 +1195,13 @@ def change_password(
     return {"status": "ok", "message": "Password updated"}
 
 
+class NameUpdateRequest(PydanticBaseModel):
+    name: str
+
+
 @router.post("/auth/update-name")
 def update_name(
-    name: str = Query(...),
+    req: NameUpdateRequest,
     user: dict = Depends(get_current_user),
 ):
     """Update display name for the authenticated user."""
@@ -1204,11 +1212,11 @@ def update_name(
     if not full_user:
         return {"status": "error", "message": "User not found"}
 
-    full_user["name"] = name.strip()
+    full_user["name"] = req.name.strip()
     users[user["email"]] = full_user
     _save_users(users)
 
-    return {"status": "ok", "name": name.strip()}
+    return {"status": "ok", "name": req.name.strip()}
 
 
 # --- Per-user Data Endpoints ---

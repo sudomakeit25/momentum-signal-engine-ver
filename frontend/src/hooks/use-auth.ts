@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { apiPost } from "@/lib/api";
+import { apiPostJson } from "@/lib/api";
 
 const TOKEN_KEY = "mse-auth-token";
 const USER_KEY = "mse-auth-user";
@@ -32,7 +32,7 @@ export function useAuth() {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await apiPost<{
+    const res = await apiPostJson<{
       status: string;
       message?: string;
       user_id?: string;
@@ -54,17 +54,14 @@ export function useAuth() {
   }, []);
 
   const register = useCallback(async (email: string, password: string, name?: string) => {
-    const params: Record<string, string> = { email, password };
-    if (name) params.name = name;
-
-    const res = await apiPost<{
+    const res = await apiPostJson<{
       status: string;
       message?: string;
       user_id?: string;
       email?: string;
       name?: string;
       token?: string;
-    }>("/auth/register", params);
+    }>("/auth/register", { email, password, name: name || "" });
 
     if (res.status === "error") {
       throw new Error(res.message || "Registration failed");

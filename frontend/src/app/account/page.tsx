@@ -15,17 +15,27 @@ interface UserProfile {
   created_at: string;
 }
 
-function authedFetch<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+function authedGet<T>(path: string): Promise<T> {
   const token = getAuthToken();
   const url = new URL(path, process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-  if (params) {
-    Object.entries(params).forEach(([key, val]) => {
-      if (val !== undefined && val !== null) url.searchParams.set(key, String(val));
-    });
-  }
   return fetch(url.toString(), {
-    method: path.includes("change-password") || path.includes("update-name") ? "POST" : "GET",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).then((r) => {
+    if (!r.ok) throw new Error(`API error: ${r.status}`);
+    return r.json();
+  });
+}
+
+function authedPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const token = getAuthToken();
+  const url = new URL(path, process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+  return fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
   }).then((r) => {
     if (!r.ok) throw new Error(`API error: ${r.status}`);
     return r.json();
@@ -58,14 +68,14 @@ export default function AccountPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      authedFetch<UserProfile>("/auth/me").then(setProfile).catch(() => {});
+      authedGet<UserProfile>("/auth/me").then(setProfile).catch(() => {});
     }
   }, [isAuthenticated]);
 
   async function handleNameSave() {
     if (!newName.trim()) return;
     try {
-      const res = await authedFetch<{ status: string; name?: string }>(
+      const res = await authedPost<{ status: string; name?: string }>(
         "/auth/update-name",
         { name: newName.trim() }
       );
@@ -103,7 +113,7 @@ export default function AccountPage() {
     }
 
     try {
-      const res = await authedFetch<{ status: string; message?: string }>(
+      const res = await authedPost<{ status: string; message?: string }>(
         "/auth/change-password",
         { current_password: currentPw, new_password: newPw }
       );
