@@ -89,10 +89,10 @@ export function useImportAlpaca() {
   });
 }
 
-export function useAlertHistory(limit = 100) {
+export function useAlertHistory(limit = 100, enrich = true) {
   return useQuery({
-    queryKey: ["alert-history", limit],
-    queryFn: () => apiFetch<Record<string, unknown>[]>("/alerts/history", { limit }),
+    queryKey: ["alert-history", limit, enrich],
+    queryFn: () => apiFetch<Record<string, unknown>[]>("/alerts/history", { limit, enrich: enrich ? "true" : "false" }),
   });
 }
 

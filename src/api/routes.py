@@ -1064,9 +1064,38 @@ def journal_stats():
 @router.get("/alerts/history")
 def alert_history(
     limit: int = Query(default=100, ge=1, le=500),
+    enrich: bool = Query(default=False, description="Add current price and P&L"),
 ):
-    """Get dispatched alert history."""
-    return get_alert_history(limit=limit)
+    """Get dispatched alert history, optionally enriched with current prices."""
+    alerts = get_alert_history(limit=limit)
+    if not enrich or not alerts:
+        return alerts
+
+    # Batch fetch current prices for all alerted symbols
+    symbols = list({a.get("symbol", "") for a in alerts if a.get("symbol")})
+    prices = {}
+    for sym in symbols:
+        try:
+            df = client.get_bars(sym, days=5)
+            if df is not None and not df.empty:
+                prices[sym] = float(df["close"].iloc[-1])
+        except Exception:
+            pass
+
+    for a in alerts:
+        sym = a.get("symbol", "")
+        entry = a.get("entry", 0)
+        current = prices.get(sym)
+        if current and entry:
+            a["current_price"] = round(current, 2)
+            a["pnl_pct"] = round((current - entry) / entry * 100, 2)
+            a["pnl_direction"] = "profit" if current > entry else "loss" if current < entry else "flat"
+        else:
+            a["current_price"] = None
+            a["pnl_pct"] = None
+            a["pnl_direction"] = None
+
+    return alerts
 
 
 # --- Signal Backtester Endpoints ---

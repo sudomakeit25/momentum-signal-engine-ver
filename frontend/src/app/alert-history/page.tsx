@@ -47,9 +47,10 @@ export default function AlertHistoryPage() {
                 <th className="px-4 py-2 font-medium">Action</th>
                 <th className="px-4 py-2 font-medium">Setup</th>
                 <th className="px-4 py-2 font-medium text-right">Entry</th>
+                <th className="px-4 py-2 font-medium text-right">Current</th>
+                <th className="px-4 py-2 font-medium text-right">P&L</th>
                 <th className="px-4 py-2 font-medium text-right">Conf</th>
                 <th className="px-4 py-2 font-medium">SMS</th>
-                <th className="px-4 py-2 font-medium">Reason</th>
               </tr>
             </thead>
             <tbody>
@@ -96,6 +97,16 @@ export default function AlertHistoryPage() {
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-xs text-zinc-300">
                     ${(alert.entry as number)?.toFixed(2)}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-zinc-400">
+                    {alert.current_price != null ? `$${Number(alert.current_price).toFixed(2)}` : "-"}
+                  </td>
+                  <td className={cn("px-4 py-2 text-right font-mono text-xs",
+                    alert.pnl_pct != null
+                      ? Number(alert.pnl_pct) >= 0 ? "text-emerald-400" : "text-red-400"
+                      : "text-zinc-600"
+                  )}>
+                    {alert.pnl_pct != null ? `${Number(alert.pnl_pct) >= 0 ? "+" : ""}${Number(alert.pnl_pct).toFixed(1)}%` : "-"}
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-xs text-zinc-400">
                     {((alert.confidence as number) * 100).toFixed(0)}%

@@ -26,6 +26,8 @@ export interface LeaderboardStats {
     outcome: string | null;
     exit_price: number | null;
     resolved_at: string | null;
+    current_price: number | null;
+    unrealized_pnl_pct: number | null;
   }>;
 }
 

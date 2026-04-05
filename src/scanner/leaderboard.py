@@ -145,6 +145,33 @@ def check_outcomes(lookback_days: int = 10) -> int:
     return resolved
 
 
+def _enrich_pending(pending: list[dict]) -> None:
+    """Add current price and unrealized P&L to pending signals."""
+    symbols = list({s.get("symbol", "") for s in pending if s.get("symbol")})
+    prices = {}
+    for sym in symbols:
+        try:
+            df = alpaca_client.get_bars(sym, days=5)
+            if df is not None and not df.empty:
+                prices[sym] = float(df["close"].iloc[-1])
+        except Exception:
+            pass
+
+    for s in pending:
+        sym = s.get("symbol", "")
+        entry = s.get("entry", 0)
+        current = prices.get(sym)
+        if current and entry:
+            s["current_price"] = round(current, 2)
+            if s.get("action") == "BUY":
+                s["unrealized_pnl_pct"] = round((current - entry) / entry * 100, 2)
+            else:
+                s["unrealized_pnl_pct"] = round((entry - current) / entry * 100, 2)
+        else:
+            s["current_price"] = None
+            s["unrealized_pnl_pct"] = None
+
+
 def compute_leaderboard() -> dict:
     """Compute leaderboard stats from tracked signals."""
     signals = get_leaderboard_signals()
@@ -153,6 +180,9 @@ def compute_leaderboard() -> dict:
 
     resolved = [s for s in signals if s.get("outcome") is not None]
     pending = [s for s in signals if s.get("outcome") is None]
+
+    # Enrich pending signals with current price and unrealized P&L
+    _enrich_pending(pending)
 
     if not resolved:
         return {

@@ -185,6 +185,12 @@ export default function LeaderboardPage() {
                       <th className="px-3 py-2 font-medium text-right">
                         Stop
                       </th>
+                      <th className="px-3 py-2 font-medium text-right">
+                        Current
+                      </th>
+                      <th className="px-3 py-2 font-medium text-right">
+                        P&L
+                      </th>
                       <th className="px-3 py-2 font-medium">Outcome</th>
                     </tr>
                   </thead>
@@ -232,6 +238,16 @@ export default function LeaderboardPage() {
                         </td>
                         <td className="px-3 py-1.5 text-right font-mono text-red-400/60">
                           ${s.stop_loss.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-zinc-400">
+                          {s.current_price != null ? `$${Number(s.current_price).toFixed(2)}` : "-"}
+                        </td>
+                        <td className={cn("px-3 py-1.5 text-right font-mono",
+                          s.unrealized_pnl_pct != null
+                            ? Number(s.unrealized_pnl_pct) >= 0 ? "text-emerald-400" : "text-red-400"
+                            : "text-zinc-600"
+                        )}>
+                          {s.unrealized_pnl_pct != null ? `${Number(s.unrealized_pnl_pct) >= 0 ? "+" : ""}${Number(s.unrealized_pnl_pct).toFixed(1)}%` : "-"}
                         </td>
                         <td className="px-3 py-1.5">
                           {s.outcome ? (
