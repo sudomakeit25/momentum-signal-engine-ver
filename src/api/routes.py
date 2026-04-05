@@ -1444,3 +1444,252 @@ def market_regime():
     result = detect_regime()
     _scan_cache[cache_key] = (time.time(), result)
     return result
+
+
+# --- Paper Trading Endpoints ---
+
+from src.trading.paper import (
+    get_positions, get_account_info, place_order, close_position,
+    get_orders, cancel_order,
+)
+
+
+@router.get("/trading/account")
+def trading_account():
+    """Get paper trading account info."""
+    return get_account_info()
+
+
+@router.get("/trading/positions")
+def trading_positions():
+    """Get all open positions."""
+    return get_positions()
+
+
+@router.get("/trading/orders")
+def trading_orders(status: str = Query(default="open")):
+    """Get recent orders."""
+    return get_orders(status=status)
+
+
+class OrderRequest(PydanticBaseModel):
+    symbol: str
+    qty: float
+    side: str
+    order_type: str = "market"
+    limit_price: float | None = None
+    stop_price: float | None = None
+    time_in_force: str = "day"
+
+
+@router.post("/trading/order")
+def trading_place_order(req: OrderRequest):
+    """Place a paper trade order."""
+    return place_order(
+        symbol=req.symbol,
+        qty=req.qty,
+        side=req.side,
+        order_type=req.order_type,
+        limit_price=req.limit_price,
+        stop_price=req.stop_price,
+        time_in_force=req.time_in_force,
+    )
+
+
+@router.post("/trading/close/{symbol}")
+def trading_close_position(symbol: str):
+    """Close an open position."""
+    return close_position(symbol)
+
+
+@router.post("/trading/cancel/{order_id}")
+def trading_cancel_order(order_id: str):
+    """Cancel an open order."""
+    return cancel_order(order_id)
+
+
+# --- Custom Screener Endpoints ---
+
+from src.scanner.custom_screener import run_custom_scan, get_available_filters
+
+
+@router.get("/screener/filters")
+def screener_filters():
+    """Get available filter options for custom screener."""
+    return get_available_filters()
+
+
+@router.get("/screener/scan")
+def screener_scan(
+    min_price: float = Query(default=5),
+    max_price: float = Query(default=500),
+    min_volume: int = Query(default=500_000),
+    min_score: float = Query(default=0),
+    min_rs: float = Query(default=0),
+    setup_types: str = Query(default=""),
+    require_ema: bool = Query(default=False),
+    min_change: float = Query(default=-999),
+    max_change: float = Query(default=999),
+    top_n: int = Query(default=50, ge=1, le=200),
+):
+    """Run a custom scan with user-defined criteria."""
+    types_list = [s.strip() for s in setup_types.split(",") if s.strip()] if setup_types else None
+
+    cache_key = f"custom_scan_{min_price}_{max_price}_{min_volume}_{min_score}_{min_rs}_{setup_types}_{require_ema}_{min_change}_{max_change}_{top_n}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
+        return cached[1]
+
+    result = run_custom_scan(
+        min_price=min_price,
+        max_price=max_price,
+        min_volume=min_volume,
+        min_score=min_score,
+        min_rs=min_rs,
+        setup_types=types_list,
+        require_ema_aligned=require_ema,
+        min_change_pct=min_change if min_change > -999 else None,
+        max_change_pct=max_change if max_change < 999 else None,
+        top_n=top_n,
+    )
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+# --- Multi-Timeframe Endpoints ---
+
+from src.scanner.multi_timeframe import analyze_multi_timeframe
+
+
+@router.get("/multi-tf/{symbol}")
+def multi_timeframe(symbol: str):
+    """Analyze a symbol across weekly, daily, and hourly timeframes."""
+    cache_key = f"multi_tf_{symbol}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
+        return cached[1]
+
+    result = analyze_multi_timeframe(symbol.upper())
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+# --- Share Signals + Community Feed Endpoints ---
+
+from src.social.community import (
+    share_signal, get_shared_signal, get_recent_shares,
+    create_post, get_feed, add_comment, like_post,
+)
+
+
+@router.post("/share/signal")
+def share_signal_endpoint(
+    symbol: str = Query(...),
+    action: str = Query(...),
+    entry: float = Query(...),
+    target: float = Query(...),
+    stop_loss: float = Query(...),
+    setup_type: str = Query(default=""),
+    confidence: float = Query(default=0.5),
+    user: dict | None = Depends(optional_user),
+):
+    """Share a signal and get a shareable link."""
+    signal_data = {
+        "symbol": symbol.upper(),
+        "action": action.upper(),
+        "entry": entry,
+        "target": target,
+        "stop_loss": stop_loss,
+        "setup_type": setup_type,
+        "confidence": confidence,
+    }
+    user_id = user["user_id"] if user else ""
+    user_name = user.get("email", "").split("@")[0] if user else ""
+    return share_signal(signal_data, user_id, user_name)
+
+
+@router.get("/share/{share_id}")
+def get_share(share_id: str):
+    """Get a shared signal by ID."""
+    result = get_shared_signal(share_id)
+    if not result:
+        return {"error": "Signal not found"}
+    return result
+
+
+@router.get("/share/recent/list")
+def recent_shares(limit: int = Query(default=20, ge=1, le=100)):
+    """Get recently shared signals."""
+    return get_recent_shares(limit=limit)
+
+
+class PostRequest(PydanticBaseModel):
+    content: str
+    symbol: str = ""
+    trade_data: dict | None = None
+
+
+@router.post("/community/post")
+def community_post(req: PostRequest, user: dict = Depends(get_current_user)):
+    """Create a community feed post."""
+    return create_post(
+        user_id=user["user_id"],
+        user_name=user.get("email", "").split("@")[0],
+        content=req.content,
+        symbol=req.symbol,
+        trade_data=req.trade_data,
+    )
+
+
+@router.get("/community/feed")
+def community_feed(
+    limit: int = Query(default=50, ge=1, le=200),
+    symbol: str = Query(default=""),
+):
+    """Get community feed posts."""
+    return get_feed(limit=limit, symbol=symbol)
+
+
+class CommentRequest(PydanticBaseModel):
+    content: str
+
+
+@router.post("/community/post/{post_id}/comment")
+def community_comment(
+    post_id: str,
+    req: CommentRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Add a comment to a post."""
+    return add_comment(
+        post_id=post_id,
+        user_id=user["user_id"],
+        user_name=user.get("email", "").split("@")[0],
+        content=req.content,
+    )
+
+
+@router.post("/community/post/{post_id}/like")
+def community_like(post_id: str):
+    """Like a post."""
+    return like_post(post_id)
+
+
+# --- Options Strategy Builder Endpoints ---
+
+from src.trading.options_strategies import build_strategy, list_strategies
+
+
+@router.get("/options/strategies")
+def options_strategy_list():
+    """List available options strategies."""
+    return list_strategies()
+
+
+@router.get("/options/strategy/{strategy_key}")
+def options_strategy_build(
+    strategy_key: str,
+    stock_price: float = Query(..., description="Current stock price"),
+):
+    """Build an options strategy with P&L calculations."""
+    return build_strategy(strategy_key, stock_price)

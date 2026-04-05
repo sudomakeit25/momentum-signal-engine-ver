@@ -37,6 +37,10 @@ import {
   Newspaper,
   GitCompareArrows,
   Gauge,
+  DollarSign,
+  SlidersHorizontal,
+  MessageSquare,
+  Wrench,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -51,8 +55,10 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Trade",
     items: [
       { href: "/scanner", label: "Scanner", icon: ScanSearch },
+      { href: "/custom-screener", label: "Custom Screener", icon: SlidersHorizontal },
       { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
       { href: "/watchlist", label: "Watchlist", icon: Eye },
+      { href: "/trading", label: "Paper Trading", icon: DollarSign },
       { href: "/portfolio", label: "Portfolio", icon: Wallet },
       { href: "/position-sizer", label: "Position Sizer", icon: Calculator },
     ],
@@ -71,10 +77,11 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Analysis",
     items: [
+      { href: "/multi-tf", label: "Multi-Timeframe", icon: Layers },
       { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
+      { href: "/options-builder", label: "Options Builder", icon: Wrench },
       { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
-      { href: "/sectors", label: "Sectors", icon: TrendingUp },
       { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
     ],
   },
@@ -85,6 +92,12 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/signals-history", label: "Signal History", icon: History },
       { href: "/alert-history", label: "Alert History", icon: ClipboardList },
       { href: "/performance", label: "Performance", icon: BarChart2 },
+    ],
+  },
+  {
+    label: "Social",
+    items: [
+      { href: "/community", label: "Community", icon: MessageSquare },
       { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
     ],
   },
