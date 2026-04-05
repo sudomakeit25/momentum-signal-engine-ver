@@ -44,6 +44,7 @@ import {
   Zap,
   Crosshair,
   PieChart,
+  FileText,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -88,6 +89,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
       { href: "/options-builder", label: "Options Builder", icon: Wrench },
       { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
+      { href: "/market-breadth", label: "Market Breadth", icon: BarChart2 },
       { href: "/risk-report", label: "Risk Report", icon: ShieldAlert },
     ],
   },
@@ -114,6 +116,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
       { href: "/alerts", label: "Price Alerts", icon: Bell },
       { href: "/notifications", label: "Notifications", icon: Send },
+      { href: "/changelog", label: "Changelog", icon: FileText },
       { href: "/guide", label: "Guide", icon: BookOpen },
     ],
   },

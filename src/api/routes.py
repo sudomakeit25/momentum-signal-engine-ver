@@ -1860,3 +1860,168 @@ def portfolio_analytics():
     result = get_portfolio_analytics()
     _scan_cache[cache_key] = (time.time(), result)
     return result
+
+
+# --- Market Breadth, Economic Calendar, Crypto F&G (19, 61, 62, 70) ---
+
+from src.scanner.market_breadth import (
+    compute_market_breadth, get_relative_volume_profile,
+    get_economic_calendar, get_crypto_fear_greed,
+)
+
+
+@router.get("/market/breadth")
+def market_breadth():
+    """Get market breadth indicators (advance/decline, % above SMAs)."""
+    cache_key = "market_breadth"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_MED:
+        return cached[1]
+    result = compute_market_breadth()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/market/economic-calendar")
+def economic_calendar():
+    """Get upcoming economic events."""
+    return get_economic_calendar()
+
+
+@router.get("/market/crypto-fear-greed")
+def crypto_fear_greed():
+    """Get crypto fear and greed index."""
+    return get_crypto_fear_greed()
+
+
+@router.get("/analysis/relative-volume/{symbol}")
+def relative_volume(symbol: str):
+    """Get hourly volume profile for a symbol."""
+    return get_relative_volume_profile(symbol.upper())
+
+
+# --- Notification Channels (41-50) ---
+
+from src.notifications.channels import (
+    send_telegram, send_discord, generate_morning_briefing,
+    generate_eod_report, evaluate_custom_rules, check_cooldown,
+)
+
+
+@router.get("/notifications/briefing")
+def morning_briefing():
+    """Generate morning market briefing."""
+    from src.scanner.market_regime import detect_regime
+    from src.scanner.news_sentiment import fetch_news
+
+    symbols = get_default_universe()
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    scan_results = mom_cached[1] if mom_cached else []
+    regime = detect_regime()
+    news = fetch_news(symbols)
+
+    return {"briefing": generate_morning_briefing(scan_results, regime, news)}
+
+
+@router.get("/notifications/eod-report")
+def eod_report():
+    """Generate end-of-day report."""
+    from src.trading.paper import get_positions
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    scan_results = mom_cached[1] if mom_cached else []
+    alerts = get_alert_history(limit=50)
+    positions = get_positions()
+
+    return {"report": generate_eod_report(scan_results, alerts, positions)}
+
+
+@router.post("/notifications/test-telegram")
+def test_telegram(
+    bot_token: str = Query(...),
+    chat_id: str = Query(...),
+    message: str = Query(default="Test from MSE"),
+):
+    """Test Telegram bot connection."""
+    ok = send_telegram(bot_token, chat_id, message)
+    return {"status": "sent" if ok else "error"}
+
+
+@router.post("/notifications/test-discord")
+def test_discord(
+    webhook_url: str = Query(...),
+    message: str = Query(default="Test from MSE"),
+):
+    """Test Discord webhook."""
+    ok = send_discord(webhook_url, message)
+    return {"status": "sent" if ok else "error"}
+
+
+@router.get("/notifications/cooldown/{symbol}")
+def alert_cooldown(symbol: str, minutes: int = Query(default=60)):
+    """Check if a symbol is in alert cooldown."""
+    ok = check_cooldown(symbol.upper(), minutes)
+    return {"symbol": symbol.upper(), "can_alert": ok}
+
+
+# --- RSS Feed of Signals (#98) ---
+
+@router.get("/feed/signals.rss")
+def signals_rss():
+    """RSS feed of recent signals."""
+    from fastapi.responses import Response
+
+    mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
+    results = mom_cached[1][:10] if mom_cached else []
+
+    items = ""
+    for r in results:
+        sym = r.symbol if hasattr(r, 'symbol') else r.get('symbol', '')
+        score = r.score if hasattr(r, 'score') else r.get('score', 0)
+        price = r.price if hasattr(r, 'price') else r.get('price', 0)
+        items += f"""<item>
+      <title>{sym} - Score {score:.0f}</title>
+      <description>{sym} at ${price:.2f}, momentum score {score:.0f}</description>
+      <link>https://momentum-signal-engine.vercel.app/chart/{sym}</link>
+    </item>\n"""
+
+    rss = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>MSE Signal Feed</title>
+    <description>Momentum Signal Engine - Latest Signals</description>
+    <link>https://momentum-signal-engine.vercel.app</link>
+    {items}
+  </channel>
+</rss>"""
+
+    return Response(content=rss, media_type="application/rss+xml")
+
+
+# --- iCal Feed of Earnings (#99) ---
+
+@router.get("/feed/earnings.ics")
+def earnings_ical():
+    """iCal feed of upcoming earnings dates."""
+    from fastapi.responses import Response
+
+    earn_cached = _scan_cache.get("earnings_whisper_14_0")
+    events = earn_cached[1][:20] if earn_cached else []
+
+    cal_events = ""
+    for e in events:
+        sym = e.symbol if hasattr(e, 'symbol') else e.get('symbol', '')
+        date = e.earnings_date if hasattr(e, 'earnings_date') else e.get('earnings_date', '')
+        date_str = date.strftime("%Y%m%d") if hasattr(date, 'strftime') else str(date)[:10].replace("-", "")
+        cal_events += f"""BEGIN:VEVENT
+DTSTART;VALUE=DATE:{date_str}
+SUMMARY:{sym} Earnings
+DESCRIPTION:Earnings report for {sym}
+END:VEVENT
+"""
+
+    ical = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//MSE//Earnings Calendar//EN
+{cal_events}END:VCALENDAR"""
+
+    return Response(content=ical, media_type="text/calendar")

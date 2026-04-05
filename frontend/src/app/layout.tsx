@@ -3,6 +3,8 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Providers } from "@/components/layout/providers";
+import { CommandPalette } from "@/components/layout/command-palette";
+import { TickerBar } from "@/components/layout/ticker-bar";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -31,8 +33,12 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         <Providers>
+          <CommandPalette />
           <Sidebar />
-          <main className="min-h-screen p-4 pt-18 md:ml-60 md:p-6 md:pt-6">{children}</main>
+          <main className="min-h-screen p-4 pt-18 md:ml-60 md:p-6 md:pt-6">
+            <TickerBar />
+            {children}
+          </main>
         </Providers>
       </body>
     </html>
