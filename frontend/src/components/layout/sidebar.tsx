@@ -33,7 +33,10 @@ import {
   FlaskConical,
   Trophy,
   LogIn,
+  LogOut,
+  User,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -59,7 +62,6 @@ const NAV_ITEMS = [
   { href: "/signal-backtest", label: "Signal Backtest", icon: FlaskConical },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { href: "/notifications", label: "Notifications", icon: Send },
-  { href: "/login", label: "Login", icon: LogIn },
   { href: "/guide", label: "Guide", icon: BookOpen },
 ];
 
@@ -68,6 +70,7 @@ export function Sidebar() {
   const { resolvedTheme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { user, isAuthenticated, logout } = useAuth();
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -128,6 +131,32 @@ export function Sidebar() {
         </nav>
 
         <div className="space-y-3 border-t border-border p-4">
+          {mounted && isAuthenticated && user ? (
+            <div className="flex items-center justify-between rounded-md px-3 py-2">
+              <div className="flex items-center gap-2">
+                <User className="h-4 w-4 text-cyan-400" />
+                <span className="text-xs font-medium text-zinc-300 truncate max-w-[120px]">
+                  {user.name || user.email}
+                </span>
+              </div>
+              <button
+                onClick={logout}
+                className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : mounted ? (
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-800/30 hover:text-zinc-200"
+            >
+              <LogIn className="h-4 w-4" />
+              Sign In
+            </Link>
+          ) : null}
           <button
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
             className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-800/30 hover:text-zinc-200"
