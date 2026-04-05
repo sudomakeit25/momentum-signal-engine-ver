@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -50,8 +50,11 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   return (
     <>
@@ -111,15 +114,17 @@ export function Sidebar() {
 
         <div className="space-y-3 border-t border-border p-4">
           <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
             className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-zinc-400 transition-colors hover:bg-zinc-800/30 hover:text-zinc-200"
           >
-            {theme === "dark" ? (
+            {!mounted ? (
+              <Moon className="h-4 w-4" />
+            ) : resolvedTheme === "dark" ? (
               <Sun className="h-4 w-4" />
             ) : (
               <Moon className="h-4 w-4" />
             )}
-            {theme === "dark" ? "Light Mode" : "Dark Mode"}
+            {!mounted ? "Dark Mode" : resolvedTheme === "dark" ? "Light Mode" : "Dark Mode"}
           </button>
           <div className="flex items-center gap-2 text-xs text-zinc-500">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
