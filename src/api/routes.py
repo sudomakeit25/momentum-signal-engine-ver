@@ -2162,3 +2162,170 @@ def tradingview_webhook(payload: WebhookPayload):
     logger_name.info("TradingView webhook: %s %s @ %s", payload.action, payload.symbol, payload.price)
 
     return {"status": "received", "symbol": payload.symbol, "action": payload.action}
+
+
+# --- Extra Data (9, 56, 60, 65-68, 75, 77) ---
+
+from src.scanner.extra_data import (
+    get_spac_overview, get_sector_rotation_signal, get_currency_strength,
+    get_commodities, get_reit_analysis, get_bond_market,
+    detect_anomalies, optimize_portfolio,
+)
+
+
+@router.get("/market/spacs")
+def spac_tracker():
+    """Get SPAC market overview."""
+    return get_spac_overview()
+
+
+@router.get("/market/sector-rotation")
+def sector_rotation():
+    """Get sector rotation signals."""
+    cache_key = "sector_rotation"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_MED:
+        return cached[1]
+    result = get_sector_rotation_signal()
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/market/currencies")
+def currency_strength():
+    """Get currency strength via forex ETFs."""
+    return get_currency_strength()
+
+
+@router.get("/market/commodities")
+def commodities():
+    """Track major commodities via ETFs."""
+    return get_commodities()
+
+
+@router.get("/market/reits")
+def reit_analysis():
+    """Analyze REITs and REIT ETFs."""
+    return get_reit_analysis()
+
+
+@router.get("/market/bonds")
+def bond_market():
+    """Monitor bond market via ETFs."""
+    return get_bond_market()
+
+
+@router.get("/signals/anomalies")
+def anomalies():
+    """Detect price/volume anomalies across the universe."""
+    return detect_anomalies()
+
+
+@router.get("/portfolio/optimize")
+def portfolio_optimize(symbols: str = Query(..., description="Comma-separated symbols")):
+    """Optimize portfolio weights (mean-variance)."""
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return optimize_portfolio(sym_list)
+
+
+# --- Natural Language Screener (#72) ---
+
+from src.scanner.nl_screener import parse_query
+
+
+@router.get("/screener/nl")
+def natural_language_screen(q: str = Query(..., description="Natural language query")):
+    """Parse natural language into scan filters and run the scan."""
+    parsed = parse_query(q)
+    filters = parsed["parsed_filters"]
+
+    # Run the scan with parsed filters
+    from src.scanner.custom_screener import run_custom_scan
+    results = run_custom_scan(
+        min_price=filters.get("min_price", 5),
+        max_price=filters.get("max_price", 500),
+        min_volume=filters.get("min_volume", 500000),
+        min_score=filters.get("min_score", 0),
+        min_rs=filters.get("min_rs", 0),
+        setup_types=[s.strip() for s in filters["setup_types"].split(",") if s.strip()] if filters.get("setup_types") else None,
+        require_ema_aligned=filters.get("require_ema", False),
+        top_n=filters.get("top_n", 20),
+    )
+
+    return {
+        "query": parsed["query"],
+        "parsed": parsed["parsed_filters"],
+        "description": parsed["description"],
+        "results": results,
+    }
+
+
+# --- Feedback Widget (#89) ---
+
+from src.data.redis_store import _get_redis as get_redis_client
+import json as json_module
+
+
+class FeedbackRequest(PydanticBaseModel):
+    type: str = "general"
+    message: str = ""
+    page: str = ""
+    rating: int = 0
+
+
+@router.post("/feedback")
+def submit_feedback(req: FeedbackRequest, user: dict | None = Depends(optional_user)):
+    """Submit in-app feedback."""
+    redis = get_redis_client()
+    if not redis:
+        return {"status": "error", "message": "Storage unavailable"}
+
+    try:
+        existing = redis.get("mse:feedback")
+        feedback_list = json_module.loads(existing) if existing else []
+        feedback_list.append({
+            "type": req.type,
+            "message": req.message,
+            "page": req.page,
+            "rating": req.rating,
+            "user_id": user["user_id"] if user else "anonymous",
+            "timestamp": datetime.now().isoformat(),
+        })
+        if len(feedback_list) > 500:
+            feedback_list = feedback_list[-500:]
+        redis.set("mse:feedback", json_module.dumps(feedback_list))
+        return {"status": "submitted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/feedback")
+def get_feedback():
+    """Get all feedback (admin)."""
+    redis = get_redis_client()
+    if not redis:
+        return []
+    try:
+        data = redis.get("mse:feedback")
+        return json_module.loads(data) if data else []
+    except Exception:
+        return []
+
+
+# --- Zapier/Make Integration (#100) ---
+
+@router.post("/webhook/zapier")
+def zapier_webhook(payload: WebhookPayload):
+    """Generic webhook receiver for Zapier/Make integrations."""
+    from src.data.redis_store import log_alert
+    log_alert({
+        "symbol": payload.symbol.upper(),
+        "action": payload.action.upper(),
+        "entry": payload.price,
+        "confidence": 0,
+        "reason": f"Zapier/Make: {payload.message}",
+        "source": "zapier",
+        "sms_sent": False,
+        "webhook_sent": False,
+    })
+    return {"status": "received"}

@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Providers } from "@/components/layout/providers";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { TickerBar } from "@/components/layout/ticker-bar";
+import { FeedbackWidget } from "@/components/layout/feedback-widget";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -40,6 +41,7 @@ export default function RootLayout({
             <TickerBar />
             {children}
           </main>
+          <FeedbackWidget />
         </Providers>
       </body>
     </html>
