@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { User, Mail, Calendar, Lock, Pencil, Check, X } from "lucide-react";
 import { useAuth, getAuthToken } from "@/hooks/use-auth";
-import { apiFetch, apiPost } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +33,7 @@ function authedFetch<T>(path: string, params?: Record<string, string | number | 
 }
 
 export default function AccountPage() {
-  const { user, isAuthenticated, loading, logout } = useAuth();
+  const { isAuthenticated, loading, logout } = useAuth();
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
 

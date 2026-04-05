@@ -11,13 +11,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { OptionsFlowResult } from "@/types/api";
 
 export default function OptionsFlowPage() {
   const [lookupSymbol, setLookupSymbol] = useState("");
   const [activeSymbol, setActiveSymbol] = useState("");
-  const [selectedResult, setSelectedResult] =
-    useState<OptionsFlowResult | null>(null);
   const queryClient = useQueryClient();
 
   const { data: scanData, isLoading: scanLoading } = useOptionsFlowScan(20);

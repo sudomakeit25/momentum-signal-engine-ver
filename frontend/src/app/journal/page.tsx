@@ -10,7 +10,7 @@ import {
   useCloseTrade,
   useImportAlpaca,
 } from "@/hooks/use-journal";
-import type { Trade, JournalStats } from "@/hooks/use-journal";
+import type { Trade } from "@/hooks/use-journal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
