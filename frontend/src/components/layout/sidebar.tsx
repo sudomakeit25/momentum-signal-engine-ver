@@ -51,6 +51,7 @@ import {
   Microscope,
   LineChart,
   Search,
+  Briefcase,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/signals-advanced", label: "Advanced Signals", icon: Zap },
       { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
       { href: "/watchlist", label: "Watchlist", icon: Eye },
+      { href: "/holdings", label: "My Holdings", icon: Briefcase },
       { href: "/trading", label: "Paper Trading", icon: DollarSign },
       { href: "/portfolio", label: "Portfolio", icon: Wallet },
       { href: "/portfolio-analytics", label: "Analytics", icon: PieChart },

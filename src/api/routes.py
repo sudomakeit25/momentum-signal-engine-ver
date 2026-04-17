@@ -2479,6 +2479,22 @@ def multi_year_trends(symbol: str):
     return result
 
 
+# --- Portfolio paste parser (shared by /watchlist import and /holdings page) ---
+
+from src.scanner.portfolio_parser import parse_portfolio_text
+
+
+class PortfolioParseRequest(PydanticBaseModel):
+    text: str
+
+
+@router.post("/portfolio/parse")
+def portfolio_parse(req: PortfolioParseRequest):
+    """Parse pasted portfolio/watchlist text into (symbol, shares?) pairs."""
+    holdings = parse_portfolio_text(req.text)
+    return {"count": len(holdings), "holdings": holdings}
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen

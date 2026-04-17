@@ -28,6 +28,7 @@ const PAGES = [
   { href: "/options-builder", label: "Options Builder" },
   { href: "/screener-presets", label: "Preset Screeners" },
   { href: "/stock-screener", label: "Stock Screener (Yahoo)" },
+  { href: "/holdings", label: "My Holdings" },
   { href: "/analyzer", label: "Stock Analyzer" },
   { href: "/trends", label: "Multi-Year Trends" },
 ];

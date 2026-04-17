@@ -35,10 +35,25 @@ export function useWatchlist() {
     );
   }, []);
 
+  const addMany = useCallback((newSymbols: string[]) => {
+    setSymbols((prev) => {
+      const set = new Set(prev);
+      let added = 0;
+      for (const s of newSymbols) {
+        const sym = s.toUpperCase();
+        if (!set.has(sym)) {
+          set.add(sym);
+          added++;
+        }
+      }
+      return added > 0 ? Array.from(set) : prev;
+    });
+  }, []);
+
   const isWatched = useCallback(
     (symbol: string) => symbols.includes(symbol),
     [symbols]
   );
 
-  return { symbols, toggle, isWatched };
+  return { symbols, toggle, addMany, isWatched };
 }
