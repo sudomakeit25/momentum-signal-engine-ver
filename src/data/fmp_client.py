@@ -210,3 +210,14 @@ def get_stock_grade(symbol: str) -> list[dict]:
         cache_key=cache_key,
     )
     return data or []
+
+
+def get_company_profile(symbol: str) -> dict:
+    """Get company profile (sector, industry, name, beta) for a symbol."""
+    cache_key = f"fmp_profile_{symbol}"
+    data = _get(f"/profile/{symbol}", cache_key=cache_key, cache_ttl=24 * 60 * 60)
+    if isinstance(data, list) and data:
+        return data[0]
+    if isinstance(data, dict):
+        return data
+    return {}

@@ -2495,6 +2495,19 @@ def portfolio_parse(req: PortfolioParseRequest):
     return {"count": len(holdings), "holdings": holdings}
 
 
+from src.scanner.portfolio_metrics import analyze_portfolio
+
+
+class PortfolioAnalyzeRequest(PydanticBaseModel):
+    holdings: list[dict]
+
+
+@router.post("/portfolio/analyze")
+def portfolio_analyze(req: PortfolioAnalyzeRequest):
+    """Run portfolio-level metrics (sector weights, correlation, beta, DD)."""
+    return analyze_portfolio(req.holdings)
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen
