@@ -1071,14 +1071,21 @@ def alert_history(
     if not enrich or not alerts:
         return alerts
 
-    # Batch fetch current prices for all alerted symbols
+    # Check cache first
+    cache_key = f"alert_history_enriched_{limit}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 120:
+        return cached[1]
+
+    # Batch fetch current prices for all alerted symbols in one call
     symbols = list({a.get("symbol", "") for a in alerts if a.get("symbol")})
     prices = {}
-    for sym in symbols:
+    if symbols:
         try:
-            df = client.get_bars(sym, days=5)
-            if df is not None and not df.empty:
-                prices[sym] = float(df["close"].iloc[-1])
+            bars_map = client.get_multi_bars(symbols, days=5)
+            for sym, df in bars_map.items():
+                if df is not None and not df.empty:
+                    prices[sym] = float(df["close"].iloc[-1])
         except Exception:
             pass
 
@@ -1095,6 +1102,7 @@ def alert_history(
             a["pnl_pct"] = None
             a["pnl_direction"] = None
 
+    _scan_cache[cache_key] = (time.time(), alerts)
     return alerts
 
 

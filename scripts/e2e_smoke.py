@@ -116,11 +116,19 @@ def stock_screener_page(page: Page, base: str) -> Result:
         r.check(False, "profile pills never appeared")
         return r
 
-    # Click a different profile and verify sector input changes
+    # Click a different profile and verify sector input changes.
+    # The effect that seeds filters runs post-paint, so wait for it.
     page.get_by_role("button", name="Healthcare value").click()
     sector_select = page.locator("select").first
-    r.check(sector_select.input_value() == "healthcare",
-            f"sector changed to healthcare (got {sector_select.input_value()!r})")
+    try:
+        sector_select.wait_for(state="attached", timeout=2_000)
+        page.wait_for_function(
+            "() => document.querySelector('select')?.value === 'healthcare'",
+            timeout=5_000,
+        )
+        r.check(True, "sector changed to healthcare after pill click")
+    except PlaywrightTimeout:
+        r.check(False, f"sector did not change (still {sector_select.input_value()!r})")
 
     # Back to Like MU and run the screen
     page.get_by_role("button", name="Like MU (cheap semis)").click()
