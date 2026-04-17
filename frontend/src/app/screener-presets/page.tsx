@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { Rocket } from "lucide-react";
 import { usePresetStrategies, usePresetScan } from "@/hooks/use-trading";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 

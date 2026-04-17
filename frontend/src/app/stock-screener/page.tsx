@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { useProfileScreenerMeta, useProfileScreenerRun } from "@/hooks/use-trading";
@@ -64,15 +64,21 @@ function fmtCap(cap: number) {
 
 export default function StockScreenerPage() {
   const { data: meta } = useProfileScreenerMeta();
-  const profiles = (meta?.profiles as Profile[] | undefined) ?? [];
-  const sectors = (meta?.sectors as string[] | undefined) ?? [];
+  const profiles = useMemo(
+    () => (meta?.profiles as Profile[] | undefined) ?? [],
+    [meta]
+  );
+  const sectors = useMemo(
+    () => (meta?.sectors as string[] | undefined) ?? [],
+    [meta]
+  );
 
   const [activeProfile, setActiveProfile] = useState("like_mu");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [runCount, setRunCount] = useState(0);
 
   // When profiles load or user picks one, seed the filter inputs.
-  useMemo(() => {
+  useEffect(() => {
     const p = profiles.find((x) => x.key === activeProfile);
     if (p) setFilters(profileToFilters(p));
   }, [profiles, activeProfile]);
