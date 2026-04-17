@@ -47,6 +47,10 @@ import {
   FileText,
   Globe,
   ArrowLeftRight,
+  Rocket,
+  Microscope,
+  LineChart,
+  Search,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -62,6 +66,8 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/scanner", label: "Scanner", icon: ScanSearch },
       { href: "/custom-screener", label: "Custom Screener", icon: SlidersHorizontal },
+      { href: "/screener-presets", label: "Preset Screeners", icon: Rocket },
+      { href: "/stock-screener", label: "Stock Screener", icon: Search },
       { href: "/signals-advanced", label: "Advanced Signals", icon: Zap },
       { href: "/chart/SPY", label: "Charts", icon: CandlestickChart },
       { href: "/watchlist", label: "Watchlist", icon: Eye },
@@ -86,6 +92,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Analysis",
     items: [
       { href: "/multi-tf", label: "Multi-Timeframe", icon: Layers },
+      { href: "/analyzer", label: "Stock Analyzer", icon: Microscope },
+      { href: "/trends", label: "Multi-Year Trends", icon: LineChart },
       { href: "/technical", label: "Technical Tools", icon: Crosshair },
       { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },

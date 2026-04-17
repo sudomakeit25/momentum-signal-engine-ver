@@ -45,3 +45,4 @@ twilio
 upstash-redis
 PyJWT
 bcrypt
+yfinance==1.3.0

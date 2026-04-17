@@ -99,3 +99,54 @@ export function useOptionsStrategy(key: string, stockPrice: number) {
     enabled: !!key && stockPrice > 0,
   });
 }
+
+export function usePresetStrategies() {
+  return useQuery({
+    queryKey: ["screener-presets"],
+    queryFn: () => apiFetch<Record<string, unknown>[]>("/screener/presets"),
+  });
+}
+
+export function usePresetScan(strategy: string, topN = 25) {
+  return useQuery({
+    queryKey: ["screener-preset-run", strategy, topN],
+    queryFn: () => apiFetch<Record<string, unknown>>(`/screener/preset/${strategy}`, { top_n: topN }),
+    enabled: !!strategy,
+  });
+}
+
+export function useAnalyzer(symbol: string) {
+  return useQuery({
+    queryKey: ["analyzer", symbol],
+    queryFn: () => apiFetch<Record<string, unknown>>(`/analyzer/${symbol}`),
+    enabled: !!symbol,
+  });
+}
+
+export function useMultiYearTrends(symbol: string) {
+  return useQuery({
+    queryKey: ["trends", symbol],
+    queryFn: () => apiFetch<Record<string, unknown>>(`/trends/${symbol}`),
+    enabled: !!symbol,
+  });
+}
+
+export function useProfileScreenerMeta() {
+  return useQuery({
+    queryKey: ["profile-screener-meta"],
+    queryFn: () => apiFetch<Record<string, unknown>>("/profile-screener/profiles"),
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function useProfileScreenerRun(
+  params: Record<string, string | number | undefined>,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["profile-screener-run", params],
+    queryFn: () => apiFetch<Record<string, unknown>>("/profile-screener/run", params),
+    enabled,
+    staleTime: 30 * 60 * 1000,
+  });
+}

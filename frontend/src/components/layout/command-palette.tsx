@@ -26,6 +26,10 @@ const PAGES = [
   { href: "/correlations", label: "Correlations" },
   { href: "/sector-flow", label: "Sector Flow" },
   { href: "/options-builder", label: "Options Builder" },
+  { href: "/screener-presets", label: "Preset Screeners" },
+  { href: "/stock-screener", label: "Stock Screener (Yahoo)" },
+  { href: "/analyzer", label: "Stock Analyzer" },
+  { href: "/trends", label: "Multi-Year Trends" },
 ];
 
 export function CommandPalette() {

@@ -1730,6 +1730,7 @@ from src.scanner.advanced_signals import (
     get_vix_adjustment, scan_gaps, scan_unusual_volume, scan_short_squeeze,
     scan_bollinger_squeeze, scan_macd_divergence, scan_ema_crosses,
     analyze_gap_fill, calculate_pivots, scan_atr_ranking,
+    scan_extended_hours_movers,
 )
 
 
@@ -1743,6 +1744,15 @@ def vix_status():
 def gap_scanner(min_gap: float = Query(default=2.0)):
     """Scan for premarket/afterhours gaps."""
     return scan_gaps(min_gap_pct=min_gap)
+
+
+@router.get("/signals/extended-hours")
+def extended_hours_movers(
+    session: str = Query(default="auto", pattern="^(auto|premarket|afterhours)$"),
+    min_move: float = Query(default=1.0),
+):
+    """Live premarket / after-hours movers vs prior regular session close."""
+    return scan_extended_hours_movers(session=session, min_move_pct=min_move)
 
 
 @router.get("/signals/unusual-volume")
@@ -2407,3 +2417,87 @@ def referral_stats(user: dict = Depends(get_current_user)):
 def apply_referral(code: str = Query(...)):
     """Apply a referral code during registration."""
     return {"applied": record_referral(code, ""), "code": code}
+
+
+# --- Preset Screener + Analyzer + Multi-year Trends ---
+
+from src.scanner.analyzer import analyze_symbol
+from src.scanner.multi_year_trends import analyze_long_term
+from src.scanner.preset_screener import list_strategies, run_preset
+
+
+@router.get("/screener/presets")
+def screener_presets():
+    """List available preset screener strategies."""
+    return list_strategies()
+
+
+@router.get("/screener/preset/{strategy}")
+def screener_preset_run(
+    strategy: str,
+    top_n: int = Query(default=25, ge=1, le=100),
+):
+    """Run a named preset screener over the default universe."""
+    cache_key = f"preset_{strategy}_{top_n}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
+        return cached[1]
+    result = run_preset(strategy, top_n=top_n)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/analyzer/{symbol}")
+def analyzer(symbol: str):
+    """Consolidated analyzer report for a single symbol."""
+    cache_key = f"analyzer_{symbol.upper()}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
+        return cached[1]
+    result = analyze_symbol(symbol)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/trends/{symbol}")
+def multi_year_trends(symbol: str):
+    """Multi-year trend analysis (returns, CAGR, drawdowns, regime)."""
+    cache_key = f"trends_{symbol.upper()}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    result = analyze_long_term(symbol)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+# --- Profile Screener (yfinance fundamentals) ---
+
+from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen
+
+
+@router.get("/profile-screener/profiles")
+def profile_screener_profiles():
+    """List available profile presets."""
+    return {"profiles": list_profiles(), "sectors": list_sectors()}
+
+
+@router.get("/profile-screener/run")
+def profile_screener_run(
+    sector: str = Query(default="semiconductors"),
+    max_fwd_pe: float | None = Query(default=None),
+    min_momentum: float | None = Query(default=None),
+    min_rev_growth: float | None = Query(default=None),
+    min_cap: float | None = Query(default=None, description="Raw market cap (e.g. 5e9)"),
+    custom: str = Query(default=""),
+):
+    """Run the profile screener with fundamental + momentum filters."""
+    results = profile_screen(
+        sector=sector,
+        max_fwd_pe=max_fwd_pe,
+        min_momentum_6m=min_momentum,
+        min_rev_growth=min_rev_growth,
+        min_cap=min_cap,
+        custom_tickers=custom,
+    )
+    return {"results": results, "count": len(results), "sector": sector}

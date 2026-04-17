@@ -96,6 +96,110 @@ def scan_gaps(min_gap_pct: float = 2.0) -> list[dict]:
     return results
 
 
+# --- 2b. Extended Hours Movers (premarket / after-hours) ---
+
+def scan_extended_hours_movers(
+    session: str = "auto",
+    min_move_pct: float = 1.0,
+) -> list[dict]:
+    """Scan for stocks moving in premarket (4:00-9:30 ET) or after-hours (16:00-20:00 ET).
+
+    session: "premarket", "afterhours", or "auto" (picks based on current ET time).
+    Returns symbols with last extended-hours price vs prior regular session close.
+    """
+    from datetime import datetime, time as dtime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    et = ZoneInfo("America/New_York")
+    now_et = datetime.now(et)
+
+    if session == "auto":
+        t = now_et.time()
+        if dtime(4, 0) <= t < dtime(9, 30):
+            session = "premarket"
+        elif dtime(16, 0) <= t < dtime(20, 0):
+            session = "afterhours"
+        else:
+            session = "afterhours"  # default to most recent
+
+    cache_key = f"ext_hours_{session}_{min_move_pct}_{now_et.strftime('%Y%m%d_%H%M')[:-1]}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    symbols = get_default_universe()
+    results = []
+
+    for sym in symbols:
+        if "/" in sym:
+            continue
+        try:
+            minute_df = alpaca_client.get_extended_hours_bars(sym, days=2)
+            if minute_df is None or minute_df.empty:
+                continue
+
+            # Convert UTC index to ET
+            minute_df = minute_df.copy()
+            minute_df.index = minute_df.index.tz_convert(et)
+
+            # Get prior regular session close (last bar between 9:30 and 16:00 ET on the most recent regular session)
+            regular_mask = (
+                (minute_df.index.time >= dtime(9, 30))
+                & (minute_df.index.time < dtime(16, 0))
+            )
+            regular = minute_df[regular_mask]
+            if regular.empty:
+                continue
+            prior_close = float(regular["close"].iloc[-1])
+            prior_close_date = regular.index[-1].date()
+
+            # Filter to the requested extended session
+            if session == "premarket":
+                # Premarket bars after the prior regular close date
+                ext_mask = (
+                    (minute_df.index.date > prior_close_date)
+                    & (minute_df.index.time >= dtime(4, 0))
+                    & (minute_df.index.time < dtime(9, 30))
+                )
+            else:  # afterhours
+                ext_mask = (
+                    (minute_df.index.date == prior_close_date)
+                    & (minute_df.index.time >= dtime(16, 0))
+                    & (minute_df.index.time < dtime(20, 0))
+                )
+
+            ext = minute_df[ext_mask]
+            if ext.empty:
+                continue
+
+            last_price = float(ext["close"].iloc[-1])
+            ext_volume = int(ext["volume"].sum())
+            move_pct = (last_price - prior_close) / prior_close * 100
+
+            if abs(move_pct) >= min_move_pct:
+                results.append({
+                    "symbol": sym,
+                    "session": session,
+                    "prior_close": round(prior_close, 2),
+                    "last_price": round(last_price, 2),
+                    "move_pct": round(move_pct, 2),
+                    "direction": "up" if move_pct > 0 else "down",
+                    "ext_volume": ext_volume,
+                    "last_bar_et": ext.index[-1].strftime("%Y-%m-%d %H:%M %Z"),
+                })
+        except Exception as e:
+            logger.debug(f"ext-hours scan failed for {sym}: {e}")
+            continue
+
+    results.sort(key=lambda r: abs(r["move_pct"]), reverse=True)
+    if results:
+        _cache.set(cache_key, results)
+    return results
+
+
 # --- 3. Unusual Volume Detector ---
 
 def scan_unusual_volume(min_ratio: float = 3.0) -> list[dict]:

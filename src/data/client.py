@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -12,6 +13,8 @@ from config.settings import settings
 from src.data.cache import Cache
 
 _cache = Cache()
+
+_STOCK_CHUNK_SIZE = 200  # Alpaca URL length safe limit for batched bars
 
 
 def _get_data_client() -> StockHistoricalDataClient:
@@ -104,12 +107,22 @@ def get_multi_bars(
 
     if stock_symbols:
         client = _get_data_client()
-        request = StockBarsRequest(
-            symbol_or_symbols=stock_symbols,
-            timeframe=timeframe,
-            start=start,
-        )
-        _parse_barset(client.get_stock_bars(request).df, stock_symbols)
+
+        def _fetch_chunk(chunk: list[str]) -> tuple[list[str], pd.DataFrame]:
+            request = StockBarsRequest(
+                symbol_or_symbols=chunk,
+                timeframe=timeframe,
+                start=start,
+            )
+            return chunk, client.get_stock_bars(request).df
+
+        chunks = [
+            stock_symbols[i : i + _STOCK_CHUNK_SIZE]
+            for i in range(0, len(stock_symbols), _STOCK_CHUNK_SIZE)
+        ]
+        with ThreadPoolExecutor(max_workers=min(8, len(chunks))) as pool:
+            for chunk, df in pool.map(_fetch_chunk, chunks):
+                _parse_barset(df, chunk)
 
     if crypto_symbols:
         crypto_client = _get_crypto_client()
@@ -128,6 +141,38 @@ def get_multi_bars(
         _cache.set(individual_key, sym_df)
 
     return result
+
+
+def get_extended_hours_bars(symbol: str, days: int = 2) -> pd.DataFrame:
+    """Fetch minute bars covering extended hours (4am-8pm ET).
+
+    Returns a DataFrame indexed by UTC timestamp. Caller is responsible for
+    filtering to the session of interest (premarket / regular / afterhours).
+    Alpaca minute bars include extended hours data.
+    """
+    cache_key = f"ext_bars_{symbol}_{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    if _is_crypto(symbol):
+        return pd.DataFrame()
+
+    start = datetime.now() - timedelta(days=days)
+    client = _get_data_client()
+    request = StockBarsRequest(
+        symbol_or_symbols=symbol,
+        timeframe=TimeFrame.Minute,
+        start=start,
+    )
+    bars = client.get_stock_bars(request).df
+    if isinstance(bars.index, pd.MultiIndex):
+        bars = bars.droplevel("symbol")
+    bars.index = pd.to_datetime(bars.index, utc=True)
+    bars = bars.sort_index()
+
+    _cache.set(cache_key, bars)
+    return bars
 
 
 def get_latest_quote(symbol: str) -> dict:

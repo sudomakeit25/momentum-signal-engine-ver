@@ -25,33 +25,58 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logging.getLogger("mse.notifications").addHandler(_handler)
 
-_REFRESH_INTERVAL = 120  # seconds — match scan cache TTL
+_REFRESH_INTERVAL = 600  # 10 min — dynamic universe is ~2k stocks, gives scan time to finish
 _stop_event = threading.Event()
+
+
+def _build_scan_universe() -> list[str]:
+    """Build the scan universe from FMP screener + user watchlist, with fallback."""
+    from src.data import fmp_client
+    from src.data.redis_store import get_watchlist
+    from src.scanner.screener import get_default_universe
+
+    liquid = fmp_client.get_liquid_universe()
+    if not liquid:
+        liquid = get_default_universe()
+        logger.info("Using hardcoded default universe fallback: %d symbols", len(liquid))
+    try:
+        watchlist = get_watchlist()
+    except Exception:
+        watchlist = []
+    merged = sorted(set(liquid) | set(watchlist))
+    logger.info(
+        "Scan universe built: %d symbols (liquid=%d, watchlist=%d)",
+        len(merged), len(liquid), len(watchlist),
+    )
+    return merged
 
 
 def _refresh_loop():
     """Continuously refresh market data and scan results in the background."""
     from src.data import client
-    from src.scanner.screener import get_default_universe, scan_universe
+    from src.scanner.screener import scan_universe
     from src.signals.generator import generate_signals
     from src.signals.patterns import detect_patterns
     from src.data.models import ScanResult
     from concurrent.futures import ThreadPoolExecutor
     from src.notifications.dispatcher import dispatch_alerts
 
-    symbols = get_default_universe()
     _seen_signal_keys: set[str] = set()
     _first_cycle = True
 
     while not _stop_event.is_set():
         try:
+            # Rebuild universe each cycle so watchlist changes take effect
+            symbols = _build_scan_universe()
+
             # Refresh Alpaca bar data
             client.get_bars("SPY", days=200)
             bars_map = client.get_multi_bars(symbols, days=200)
 
-            # Run the default scan and cache the result
+            # Run the scan — pass top_n=None so all qualifying signals can dispatch;
+            # max_price lifted so high-priced names like AVGO aren't excluded.
             results, bars_map = scan_universe(
-                symbols, top_n=20, min_price=5.0, max_price=500.0,
+                symbols, top_n=len(symbols), min_price=5.0, max_price=10_000.0,
                 min_volume=500_000, return_bars=True,
             )
 
@@ -131,13 +156,37 @@ def _refresh_loop():
             except Exception as e:
                 logger.debug("Watchlist alert check failed: %s", e)
 
-            cache_key = "scan_20_5.0_500.0_500000"
-            _scan_cache[cache_key] = (time.time(), results)
-            logger.info("Background refresh complete: %d results cached", len(results))
+            # Preserve the legacy cache slot the /scan endpoint reads with defaults
+            legacy_top20 = [r for r in results if r.price <= 500.0][:20]
+            _scan_cache["scan_20_5.0_500.0_500000"] = (time.time(), legacy_top20)
+            _scan_cache["scan_full"] = (time.time(), results)
+            logger.info(
+                "Background refresh complete: %d total results, %d in legacy top-20 cache",
+                len(results), len(legacy_top20),
+            )
+
+            # Warm the profile-screener (yfinance) cache for hot sectors so the
+            # user never hits a cold load on the Stock Screener page.
+            try:
+                from src.scanner.profile_screener import warm_cache
+                warmed = warm_cache()
+                if warmed:
+                    logger.info("Profile screener cache warmed: %d rows", warmed)
+            except Exception as e:
+                logger.debug("Profile screener warmup failed: %s", e)
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 
         _stop_event.wait(_REFRESH_INTERVAL)
+
+
+def _warm_profile_cache_on_startup() -> None:
+    try:
+        from src.scanner.profile_screener import warm_cache
+        rows = warm_cache()
+        logger.info("Startup profile cache warmup: %d rows", rows)
+    except Exception as e:
+        logger.warning("Startup profile cache warmup failed: %s", e)
 
 
 @asynccontextmanager
@@ -145,6 +194,8 @@ async def lifespan(app: FastAPI):
     # Start background refresh thread
     thread = threading.Thread(target=_refresh_loop, daemon=True)
     thread.start()
+    # Warm the yfinance cache in a separate thread so startup is not blocked
+    threading.Thread(target=_warm_profile_cache_on_startup, daemon=True).start()
     yield
     _stop_event.set()
 
