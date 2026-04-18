@@ -150,3 +150,13 @@ export function useProfileScreenerRun(
     staleTime: 30 * 60 * 1000,
   });
 }
+
+export function useInstrumentFundamentals(symbol: string) {
+  return useQuery({
+    queryKey: ["instrument-fundamentals", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/fundamentals`),
+    enabled: !!symbol,
+    staleTime: 60 * 60 * 1000,
+  });
+}

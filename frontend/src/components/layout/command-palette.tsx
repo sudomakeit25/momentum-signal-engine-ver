@@ -29,6 +29,7 @@ const PAGES = [
   { href: "/screener-presets", label: "Preset Screeners" },
   { href: "/stock-screener", label: "Stock Screener (Yahoo)" },
   { href: "/holdings", label: "My Holdings" },
+  { href: "/instrument/AAPL", label: "Instrument Page (example: AAPL)" },
   { href: "/analyzer", label: "Stock Analyzer" },
   { href: "/trends", label: "Multi-Year Trends" },
 ];
@@ -94,13 +95,22 @@ export function CommandPalette() {
         <div className="max-h-72 overflow-y-auto p-2">
           {/* Symbol match */}
           {isSymbol && (
-            <button
-              onClick={() => navigate(`/chart/${q}`)}
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-cyan-400 hover:bg-zinc-800"
-            >
-              <span className="font-mono font-bold">{q}</span>
-              <span className="text-xs text-zinc-500">Open chart</span>
-            </button>
+            <>
+              <button
+                onClick={() => navigate(`/instrument/${q}`)}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-cyan-400 hover:bg-zinc-800"
+              >
+                <span className="font-mono font-bold">{q}</span>
+                <span className="text-xs text-zinc-500">Instrument overview</span>
+              </button>
+              <button
+                onClick={() => navigate(`/chart/${q}`)}
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-cyan-400 hover:bg-zinc-800"
+              >
+                <span className="font-mono font-bold">{q}</span>
+                <span className="text-xs text-zinc-500">Open chart</span>
+              </button>
+            </>
           )}
 
           {/* Popular symbols when empty */}

@@ -221,3 +221,77 @@ def get_company_profile(symbol: str) -> dict:
     if isinstance(data, dict):
         return data
     return {}
+
+
+def get_income_statement(symbol: str, period: str = "annual", limit: int = 10) -> list[dict]:
+    """Income statement history (Starter+ required)."""
+    cache_key = f"fmp_income_{symbol}_{period}_{limit}"
+    data = _get(
+        f"/income-statement/{symbol}",
+        params={"period": period, "limit": limit},
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    return data if isinstance(data, list) else []
+
+
+def get_balance_sheet(symbol: str, period: str = "annual", limit: int = 10) -> list[dict]:
+    """Balance sheet history (Starter+ required)."""
+    cache_key = f"fmp_bs_{symbol}_{period}_{limit}"
+    data = _get(
+        f"/balance-sheet-statement/{symbol}",
+        params={"period": period, "limit": limit},
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    return data if isinstance(data, list) else []
+
+
+def get_cash_flow(symbol: str, period: str = "annual", limit: int = 10) -> list[dict]:
+    """Cash flow statement history (Starter+ required)."""
+    cache_key = f"fmp_cf_{symbol}_{period}_{limit}"
+    data = _get(
+        f"/cash-flow-statement/{symbol}",
+        params={"period": period, "limit": limit},
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    return data if isinstance(data, list) else []
+
+
+def get_key_metrics_ttm(symbol: str) -> dict:
+    """TTM key metrics: P/E, EV/Sales, dividend yield, etc. (Starter+ required)."""
+    cache_key = f"fmp_km_ttm_{symbol}"
+    data = _get(
+        f"/key-metrics-ttm/{symbol}",
+        cache_key=cache_key,
+        cache_ttl=60 * 60,
+    )
+    if isinstance(data, list) and data:
+        return data[0]
+    return {}
+
+
+def get_enterprise_values(symbol: str, period: str = "annual", limit: int = 10) -> list[dict]:
+    """Enterprise value history with market cap and shares outstanding."""
+    cache_key = f"fmp_ev_{symbol}_{period}_{limit}"
+    data = _get(
+        f"/enterprise-values/{symbol}",
+        params={"period": period, "limit": limit},
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    return data if isinstance(data, list) else []
+
+
+def get_quote(symbol: str) -> dict:
+    """Real-time quote (works on free tier)."""
+    cache_key = f"fmp_quote_{symbol}"
+    data = _get(
+        f"/quote/{symbol}",
+        cache_key=cache_key,
+        cache_ttl=60,
+    )
+    if isinstance(data, list) and data:
+        return data[0]
+    return {}

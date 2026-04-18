@@ -2508,6 +2508,23 @@ def portfolio_analyze(req: PortfolioAnalyzeRequest):
     return analyze_portfolio(req.holdings)
 
 
+# --- Instrument overview page ---
+
+from src.scanner.instrument_fundamentals import get_fundamentals
+
+
+@router.get("/instrument/{symbol}/fundamentals")
+def instrument_fundamentals(symbol: str):
+    """Return FMP-backed fundamentals bundle for the instrument page."""
+    cache_key = f"instr_fund_{symbol.upper()}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    result = get_fundamentals(symbol)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen
