@@ -44,6 +44,65 @@ def _roc(close: pd.Series, period: int) -> pd.Series:
     return (close / close.shift(period) - 1) * 100
 
 
+def _ad_line(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+    """Chaikin Accumulation/Distribution Line.
+
+    MFM = ((close - low) - (high - close)) / (high - low)
+    MFV = MFM * volume
+    A/D = cumulative sum of MFV
+    """
+    rng = (high - low).replace(0, np.nan)
+    mfm = ((close - low) - (high - close)) / rng
+    mfv = (mfm * volume).fillna(0)
+    return mfv.cumsum()
+
+
+def _wyckoff_phase(
+    close: pd.Series,
+    volume: pd.Series,
+    ad: pd.Series,
+) -> tuple[str, str]:
+    """Simplified Wyckoff-phase classifier.
+
+    Compares recent 30-bar behavior:
+      - Price: is it trending up / down / flat
+      - Volume: is it expanding or contracting
+      - A/D line: is it confirming price (aligned slopes) or diverging
+
+    Returns (phase, description) where phase is one of:
+      markup     — uptrend + volume confirmation
+      distribution — flat/down near highs + volume expansion
+      markdown   — downtrend + volume confirmation
+      accumulation — flat/up near lows + volume contraction
+      neutral    — inconclusive
+    """
+    if len(close) < 40:
+        return "neutral", "insufficient history"
+    window = 30
+    c = close.tail(window)
+    v = volume.tail(window)
+    a = ad.tail(window)
+
+    price_slope_pct = (c.iloc[-1] / c.iloc[0] - 1) * 100 if c.iloc[0] > 0 else 0.0
+    vol_now = v.tail(10).mean()
+    vol_prev = v.head(10).mean()
+    vol_expanding = vol_prev > 0 and (vol_now / vol_prev) > 1.2
+    ad_slope = a.iloc[-1] - a.iloc[0]
+
+    near_hi = close.iloc[-1] >= close.tail(60).max() * 0.95
+    near_lo = close.iloc[-1] <= close.tail(60).min() * 1.05
+
+    if price_slope_pct > 5 and ad_slope > 0:
+        return "markup", f"Uptrend confirmed by rising A/D (+{price_slope_pct:.1f}% in 30 bars)"
+    if price_slope_pct < -5 and ad_slope < 0:
+        return "markdown", f"Downtrend confirmed by falling A/D ({price_slope_pct:.1f}% in 30 bars)"
+    if near_hi and abs(price_slope_pct) < 5 and vol_expanding and ad_slope <= 0:
+        return "distribution", "Flat near highs with expanding volume and weakening A/D"
+    if near_lo and abs(price_slope_pct) < 5 and not vol_expanding and ad_slope >= 0:
+        return "accumulation", "Flat near lows with contracting volume and rising A/D"
+    return "neutral", f"No clear phase (price {price_slope_pct:+.1f}%, A/D slope {ad_slope:+.0f})"
+
+
 def get_indicator_series(symbol: str, days: int = 260) -> dict:
     symbol = symbol.upper()
     try:
@@ -72,6 +131,9 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
     roc_10 = _roc(close, 10)
     roc_21 = _roc(close, 21)
     roc_63 = _roc(close, 63)
+    volume = df["volume"].astype(float) if "volume" in df else pd.Series([], dtype=float)
+    ad = _ad_line(high, low, close, volume) if len(volume) == len(close) else pd.Series([], dtype=float)
+    wyckoff_phase, wyckoff_desc = _wyckoff_phase(close, volume, ad) if len(ad) else ("neutral", "no volume data")
 
     # Latest snapshots
     def _last(series):
@@ -165,6 +227,26 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
 
     verdict = _rsi_verdict(snapshot["rsi"])
 
+    # Normalize A/D for plotting (scale to 0-100 over the visible window)
+    ad_series: list[float | None] = []
+    if len(ad):
+        tail_ad = ad.tail(tail_bars)
+        if len(tail_ad):
+            lo = float(tail_ad.min())
+            hi = float(tail_ad.max())
+            span = hi - lo if hi != lo else 1.0
+            for idx in close.index[-tail_bars:]:
+                v = ad.get(idx)
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    ad_series.append(None)
+                else:
+                    ad_series.append(round((float(v) - lo) / span * 100, 2))
+    # Pad to same length as `series`
+    while len(ad_series) < len(series):
+        ad_series.append(None)
+    for i, rec in enumerate(series):
+        rec["ad_norm"] = ad_series[i] if i < len(ad_series) else None
+
     return {
         "symbol": symbol,
         "snapshot": snapshot,
@@ -173,6 +255,10 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
         "mood": {
             "score": mood_score,
             "label": mood_label,
+        },
+        "wyckoff": {
+            "phase": wyckoff_phase,
+            "description": wyckoff_desc,
         },
     }
 

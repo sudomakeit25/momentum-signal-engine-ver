@@ -93,6 +93,65 @@ class TestMVerdict:
     def test_none(self): assert ifund._m_verdict(None) == "n/a"
 
 
+class TestPeterLynch:
+    def test_growth_cap_at_30(self):
+        fv = ifund._peter_lynch_fair_value(eps_ttm=2.0, growth_pct=50.0, dividend_yield_pct=2.0)
+        # 50+2 > 30, cap at 30 → 2 * 30 = 60
+        assert fv == 60.0
+    def test_negative_growth_returns_none(self):
+        assert ifund._peter_lynch_fair_value(2.0, -5.0, 0.0) is None
+    def test_zero_eps_returns_none(self):
+        assert ifund._peter_lynch_fair_value(0, 20.0, 1.0) is None
+
+
+class TestDCF:
+    def test_basic(self):
+        # FCF $1B, 10% growth, 100M shares → plausibly > current for a healthy growth co
+        fv = ifund._dcf_fair_value(
+            fcf_latest=1_000_000_000,
+            growth_pct=10.0,
+            shares_outstanding=100_000_000,
+        )
+        assert fv is not None and fv > 0
+
+    def test_zero_fcf_returns_none(self):
+        assert ifund._dcf_fair_value(0, 10.0, 100) is None
+
+    def test_zero_shares_returns_none(self):
+        assert ifund._dcf_fair_value(1e9, 10.0, 0) is None
+
+
+class TestShareholdersYield:
+    def test_basic(self):
+        # $500M in dividends + $1B buybacks / $10B cap = 15%
+        r = ifund._shareholders_yield(
+            dividend_paid=-500_000_000,
+            stock_repurchased=-1_000_000_000,
+            market_cap=10_000_000_000,
+        )
+        assert r == 15.0
+
+    def test_zero_cap_returns_none(self):
+        assert ifund._shareholders_yield(1, 1, 0) is None
+
+
+class TestKeyMetrics:
+    def test_basic(self):
+        income = {
+            "revenue": 100, "netIncome": 10, "grossProfit": 40,
+            "operatingIncome": 20, "interestExpense": 2,
+        }
+        balance = {"totalAssets": 500, "totalStockholdersEquity": 200, "totalDebt": 150}
+        m = ifund._key_metrics(income, balance)
+        assert m["gross_margin_pct"] == 40.0
+        assert m["operating_margin_pct"] == 20.0
+        assert m["net_margin_pct"] == 10.0
+        assert m["roe_pct"] == 5.0
+        assert m["roa_pct"] == 2.0
+        assert m["debt_to_equity"] == 0.75
+        assert m["interest_coverage"] == 10.0
+
+
 class TestEmptyFallback:
     def test_no_fmp_returns_structured_empty(self, monkeypatch):
         """When FMP is unavailable, get_fundamentals returns a full shape with empty values."""

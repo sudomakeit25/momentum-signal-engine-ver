@@ -76,6 +76,21 @@ type FairValue = {
   fair_value: number | null;
   current_price: number | null;
   deviation_pct: number | null;
+  peter_lynch: number | null;
+  peter_lynch_deviation_pct: number | null;
+  dcf: number | null;
+  dcf_deviation_pct: number | null;
+  growth_assumption_pct: number;
+};
+
+type KeyMetrics = {
+  gross_margin_pct: number | null;
+  operating_margin_pct: number | null;
+  net_margin_pct: number | null;
+  roe_pct: number | null;
+  roa_pct: number | null;
+  debt_to_equity: number | null;
+  interest_coverage: number | null;
 };
 
 type Altman = {
@@ -107,6 +122,8 @@ type Fundamentals = {
   altman_z: Altman;
   piotroski_f: { score: number | null; verdict: string };
   beneish_m: { score: number | null; verdict: string };
+  shareholders_yield_pct: number | null;
+  key_metrics: KeyMetrics;
   statements: Statements;
   has_fundamentals: boolean;
 };
@@ -125,6 +142,35 @@ function fmtShares(n: number) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   return n.toFixed(0);
 }
+
+const CURRENCY_BY_SUFFIX: Record<string, string> = {
+  PA: "EUR", DE: "EUR", AS: "EUR", BR: "EUR", MI: "EUR", MC: "EUR", VI: "EUR",
+  L: "GBP",
+  TO: "CAD", V: "CAD",
+  SW: "CHF",
+  TA: "ILS",
+  HK: "HKD",
+  T: "JPY",
+  TW: "TWD",
+  SS: "CNY", SZ: "CNY",
+  KS: "KRW",
+  AX: "AUD",
+  SA: "BRL",
+  MX: "MXN",
+  NS: "INR",
+  ST: "SEK", OL: "NOK", HE: "EUR", CO: "DKK",
+};
+
+function currencyForSymbol(symbol: string): string {
+  const parts = symbol.split(".");
+  if (parts.length === 2) {
+    const suffix = parts[1].toUpperCase();
+    if (suffix in CURRENCY_BY_SUFFIX) return CURRENCY_BY_SUFFIX[suffix];
+  }
+  if (symbol.includes("/")) return "USD";  // crypto pairs vs USD
+  return "USD";
+}
+
 
 function verdictColor(v: string) {
   if (v === "safe") return "text-emerald-400";
@@ -174,6 +220,15 @@ export default function InstrumentPage({
           </div>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          {(() => {
+            const ccy = currencyForSymbol(symbol);
+            if (ccy === "USD") return null;
+            return (
+              <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 font-mono text-indigo-300">
+                {ccy}
+              </span>
+            );
+          })()}
           {header?.sector && (
             <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-zinc-300">
               {header.sector}
@@ -877,43 +932,89 @@ function FundamentalsTab({
         </div>
       )}
 
-      {/* Fair value */}
-      {fair_value.fair_value !== null && (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-            <div className="text-[10px] uppercase text-zinc-500">Fair Value (EV/Sales)</div>
-            <div className="mt-2 font-mono text-2xl text-zinc-100">
-              ${fair_value.fair_value.toFixed(2)}
+      {/* Valuation methods */}
+      {(fair_value.fair_value !== null ||
+        fair_value.peter_lynch !== null ||
+        fair_value.dcf !== null) && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase text-zinc-400">
+              Fair Value Estimates (current: ${fair_value.current_price?.toFixed(2) ?? "--"})
+            </div>
+            <div className="text-[10px] text-zinc-500">
+              Growth assumption: {fair_value.growth_assumption_pct.toFixed(1)}%/yr
             </div>
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-            <div className="text-[10px] uppercase text-zinc-500">Current Price</div>
-            <div className="mt-2 font-mono text-2xl text-zinc-100">
-              {fair_value.current_price !== null
-                ? `$${fair_value.current_price.toFixed(2)}`
-                : "--"}
-            </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <ValuationCard
+              label="EV / Sales"
+              value={fair_value.fair_value}
+              deviation={fair_value.deviation_pct}
+            />
+            <ValuationCard
+              label="Peter Lynch"
+              value={fair_value.peter_lynch}
+              deviation={fair_value.peter_lynch_deviation_pct}
+              note="EPS × (growth + yield), capped at 30"
+            />
+            <ValuationCard
+              label="DCF"
+              value={fair_value.dcf}
+              deviation={fair_value.dcf_deviation_pct}
+              note="10y projection, 10% discount, 2.5% terminal"
+            />
           </div>
-          <div
-            className={cn(
-              "rounded-lg border p-4",
-              fair_value.deviation_pct !== null && fair_value.deviation_pct > 0
-                ? "border-red-500/30 bg-red-500/10 text-red-200"
-                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-            )}
-          >
-            <div className="text-[10px] uppercase opacity-70">vs Fair Value</div>
-            <div className="mt-2 font-mono text-2xl">
-              {fair_value.deviation_pct !== null
-                ? `${fair_value.deviation_pct > 0 ? "+" : ""}${fair_value.deviation_pct.toFixed(2)}%`
-                : "--"}
-            </div>
-            <div className="mt-1 text-[10px] opacity-80">
-              {fair_value.deviation_pct !== null && fair_value.deviation_pct > 0
-                ? "above fair value (overvalued)"
-                : "below fair value (undervalued)"}
-            </div>
-          </div>
+        </div>
+      )}
+
+      {/* Key metrics + shareholders yield */}
+      {(fundamentals.shareholders_yield_pct !== null ||
+        Object.values(fundamentals.key_metrics).some((v) => v !== null)) && (
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 sm:grid-cols-4 lg:grid-cols-8">
+          <MetricCell
+            label="Gross Margin"
+            value={fmtPctMaybe(fundamentals.key_metrics.gross_margin_pct)}
+          />
+          <MetricCell
+            label="Op Margin"
+            value={fmtPctMaybe(fundamentals.key_metrics.operating_margin_pct)}
+          />
+          <MetricCell
+            label="Net Margin"
+            value={fmtPctMaybe(fundamentals.key_metrics.net_margin_pct)}
+          />
+          <MetricCell
+            label="ROE"
+            value={fmtPctMaybe(fundamentals.key_metrics.roe_pct)}
+          />
+          <MetricCell
+            label="ROA"
+            value={fmtPctMaybe(fundamentals.key_metrics.roa_pct)}
+          />
+          <MetricCell
+            label="Debt/Equity"
+            value={
+              fundamentals.key_metrics.debt_to_equity !== null
+                ? fundamentals.key_metrics.debt_to_equity.toFixed(2)
+                : "--"
+            }
+          />
+          <MetricCell
+            label="Int Coverage"
+            value={
+              fundamentals.key_metrics.interest_coverage !== null
+                ? `${fundamentals.key_metrics.interest_coverage.toFixed(1)}×`
+                : "--"
+            }
+          />
+          <MetricCell
+            label="Shareholders Yield"
+            value={
+              fundamentals.shareholders_yield_pct !== null
+                ? `${fundamentals.shareholders_yield_pct.toFixed(2)}%`
+                : "--"
+            }
+          />
         </div>
       )}
 
@@ -1041,6 +1142,51 @@ function MetricCell({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-mono text-sm text-zinc-100">{value}</div>
     </div>
   );
+}
+
+function ValuationCard({
+  label,
+  value,
+  deviation,
+  note,
+}: {
+  label: string;
+  value: number | null;
+  deviation: number | null;
+  note?: string;
+}) {
+  const hasValue = value !== null;
+  const isOver = deviation !== null && deviation > 0;
+  return (
+    <div
+      className={cn(
+        "rounded-md border p-3",
+        !hasValue
+          ? "border-zinc-800 bg-zinc-900/50"
+          : isOver
+          ? "border-red-500/30 bg-red-500/10"
+          : "border-emerald-500/30 bg-emerald-500/10",
+      )}
+    >
+      <div className="flex items-center justify-between text-[10px] uppercase opacity-80">
+        <span>{label}</span>
+        <span>
+          {deviation !== null
+            ? `${deviation > 0 ? "+" : ""}${deviation.toFixed(1)}%`
+            : "—"}
+        </span>
+      </div>
+      <div className="mt-1 font-mono text-2xl">
+        {hasValue ? `$${value.toFixed(2)}` : "n/a"}
+      </div>
+      {note && <div className="mt-1 text-[10px] opacity-70">{note}</div>}
+    </div>
+  );
+}
+
+function fmtPctMaybe(v: number | null): string {
+  if (v === null) return "--";
+  return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
 /* --------------- Seasonality --------------- */
@@ -1501,6 +1647,15 @@ type IndSeries = {
   }[];
   verdict: string;
   mood: { score: number | null; label: string };
+  wyckoff?: { phase: string; description: string };
+};
+
+const WYCKOFF_COLORS: Record<string, string> = {
+  markup: "bg-emerald-500/20 text-emerald-200 border-emerald-500/40",
+  accumulation: "bg-sky-500/20 text-sky-200 border-sky-500/40",
+  distribution: "bg-amber-500/20 text-amber-200 border-amber-500/40",
+  markdown: "bg-red-500/20 text-red-200 border-red-500/40",
+  neutral: "bg-zinc-700/30 text-zinc-300 border-zinc-500/40",
 };
 
 const MOOD_COLORS: Record<string, string> = {
@@ -1531,6 +1686,29 @@ function IndicatorsTab({ symbol }: { symbol: string }) {
     <div className="space-y-4">
       {/* Market Mood Meter */}
       <MoodMeter score={d.mood?.score ?? null} label={d.mood?.label ?? "neutral"} />
+
+      {/* Wyckoff phase */}
+      {d.wyckoff && (
+        <div
+          className={cn(
+            "rounded-lg border p-4",
+            WYCKOFF_COLORS[d.wyckoff.phase] ?? WYCKOFF_COLORS.neutral,
+          )}
+        >
+          <div className="mb-1 flex items-center justify-between">
+            <div className="text-[10px] uppercase tracking-wider opacity-80">
+              Wyckoff Phase
+            </div>
+            <div className="text-xs uppercase opacity-90">{d.wyckoff.phase}</div>
+          </div>
+          <p className="text-xs opacity-90">{d.wyckoff.description}</p>
+          <p className="mt-1 text-[10px] opacity-70">
+            Simplified: price trend + volume expansion + A/D line slope over
+            the last 30 bars. Markup / Markdown = confirmed trend. Accumulation
+            / Distribution = transition zones. Neutral = inconclusive.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
         <StatTile label="RSI (14)" value={d.snapshot.rsi} fmt="fixed1" />

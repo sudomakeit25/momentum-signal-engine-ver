@@ -224,6 +224,98 @@ def _m_verdict(m: float | None) -> str:
     return "clean"
 
 
+def _peter_lynch_fair_value(eps_ttm: float, growth_pct: float, dividend_yield_pct: float) -> float | None:
+    """Peter Lynch Fair Value: EPS * (growth + dividend yield) / PEG-like adjustment.
+
+    Simplified form:  Fair P/E = growth_pct + dividend_yield_pct (capped at 30).
+    Fair value per share = EPS * Fair P/E.
+    Returns None if inputs are insufficient or growth is negative (Lynch rule: not applicable).
+    """
+    if eps_ttm <= 0 or growth_pct <= 0:
+        return None
+    fair_pe = min(growth_pct + dividend_yield_pct, 30.0)
+    return round(eps_ttm * fair_pe, 2)
+
+
+def _dcf_fair_value(
+    fcf_latest: float,
+    growth_pct: float,
+    shares_outstanding: float,
+    discount_rate: float = 10.0,
+    terminal_growth: float = 2.5,
+    years: int = 10,
+) -> float | None:
+    """5-factor DCF: project FCF years ahead at growth_pct, discount back,
+    add a Gordon-growth terminal value, divide by shares outstanding.
+
+    Returns per-share fair value. Returns None on bad inputs.
+    """
+    if fcf_latest <= 0 or shares_outstanding <= 0:
+        return None
+    g = max(min(growth_pct / 100.0, 0.25), -0.05)
+    r = discount_rate / 100.0
+    tg = terminal_growth / 100.0
+    if r <= tg:
+        return None
+
+    pv = 0.0
+    fcf = fcf_latest
+    for t in range(1, years + 1):
+        fcf *= (1 + g)
+        pv += fcf / ((1 + r) ** t)
+    terminal = fcf * (1 + tg) / (r - tg)
+    pv += terminal / ((1 + r) ** years)
+    return round(pv / shares_outstanding, 2)
+
+
+def _shareholders_yield(
+    dividend_paid: float,
+    stock_repurchased: float,
+    market_cap: float,
+) -> float | None:
+    """Total shareholders yield = (dividends paid + buybacks) / market_cap * 100.
+
+    FMP reports dividend_paid and common_stock_repurchased as negative numbers
+    (cash outflows), so we take their absolute values.
+    """
+    if market_cap <= 0:
+        return None
+    div = abs(dividend_paid or 0)
+    buy = abs(stock_repurchased or 0)
+    return round((div + buy) / market_cap * 100, 2)
+
+
+def _key_metrics(income: dict, balance: dict) -> dict:
+    """Compute ROE / ROA / margins / interest coverage from the latest annual period."""
+    revenue = _safe_float(income.get("revenue"))
+    net_income = _safe_float(income.get("netIncome"))
+    gross_profit = _safe_float(income.get("grossProfit"))
+    operating_income = _safe_float(income.get("operatingIncome"))
+    interest_expense = _safe_float(income.get("interestExpense"))
+
+    total_assets = _safe_float(balance.get("totalAssets"))
+    total_equity = _safe_float(balance.get("totalStockholdersEquity"))
+    total_debt = _safe_float(balance.get("totalDebt"))
+
+    def _pct(num: float, den: float) -> float | None:
+        if den <= 0:
+            return None
+        return round(num / den * 100, 2)
+
+    return {
+        "gross_margin_pct": _pct(gross_profit, revenue),
+        "operating_margin_pct": _pct(operating_income, revenue),
+        "net_margin_pct": _pct(net_income, revenue),
+        "roe_pct": _pct(net_income, total_equity),
+        "roa_pct": _pct(net_income, total_assets),
+        "debt_to_equity": round(total_debt / total_equity, 2) if total_equity > 0 else None,
+        "interest_coverage": (
+            round(operating_income / interest_expense, 2)
+            if interest_expense > 0 else None
+        ),
+    }
+
+
 def get_fundamentals(symbol: str) -> dict:
     """Return a fundamentals bundle for the given symbol.
 
@@ -316,6 +408,39 @@ def get_fundamentals(symbol: str) -> dict:
             fair_value = round(fair_ev / shares_latest, 2)
             fair_value_basis = "EV/Sales"
 
+    # Additional fair value methods: Peter Lynch + DCF.
+    growth_pct_for_valuation = 0.0
+    if len(income_series) >= 4:
+        # Use 3-year revenue CAGR as growth proxy
+        try:
+            recent = income_series[-1]["revenue"]
+            old = income_series[-4]["revenue"]
+            if recent > 0 and old > 0:
+                growth_pct_for_valuation = ((recent / old) ** (1 / 3) - 1) * 100
+        except Exception:
+            pass
+
+    pl_fair_value = _peter_lynch_fair_value(
+        header["eps_ttm"],
+        growth_pct_for_valuation,
+        header["dividend_yield_pct"],
+    )
+
+    dcf_fair_value = None
+    if cash_flow_annual and ev_annual:
+        latest_cf = cash_flow_annual[0]
+        latest_ev = ev_annual[0]
+        fcf_latest = _safe_float(latest_cf.get("operatingCashFlow")) - _safe_float(
+            latest_cf.get("capitalExpenditure")
+        )
+        shares_latest = _safe_float(latest_ev.get("numberOfShares"))
+        if fcf_latest > 0 and shares_latest > 0:
+            dcf_fair_value = _dcf_fair_value(
+                fcf_latest,
+                growth_pct_for_valuation,
+                shares_latest,
+            )
+
     fair_value_block = {
         "method": fair_value_basis,
         "fair_value": fair_value,
@@ -325,6 +450,19 @@ def get_fundamentals(symbol: str) -> dict:
             if fair_value and current_price
             else None
         ),
+        "peter_lynch": pl_fair_value,
+        "peter_lynch_deviation_pct": (
+            round((current_price - pl_fair_value) / pl_fair_value * 100, 2)
+            if pl_fair_value and current_price
+            else None
+        ),
+        "dcf": dcf_fair_value,
+        "dcf_deviation_pct": (
+            round((current_price - dcf_fair_value) / dcf_fair_value * 100, 2)
+            if dcf_fair_value and current_price
+            else None
+        ),
+        "growth_assumption_pct": round(growth_pct_for_valuation, 2),
     }
 
     # Altman Z-Score per year
@@ -434,6 +572,21 @@ def get_fundamentals(symbol: str) -> dict:
         ),
     }
 
+    # Shareholders yield (dividends + buybacks / market cap)
+    sh_yield = None
+    if cash_flow_annual and header["market_cap"] > 0:
+        cf_latest = cash_flow_annual[0]
+        sh_yield = _shareholders_yield(
+            _safe_float(cf_latest.get("dividendsPaid")),
+            _safe_float(cf_latest.get("commonStockRepurchased")),
+            header["market_cap"],
+        )
+
+    # Key metrics (ROE / ROA / margins / coverage)
+    key_metrics = {}
+    if income_annual and balance_annual:
+        key_metrics = _key_metrics(income_annual[0], balance_annual[0])
+
     return {
         "header": header,
         "income_series": income_series,
@@ -453,6 +606,8 @@ def get_fundamentals(symbol: str) -> dict:
             "score": beneish_m,
             "verdict": _m_verdict(beneish_m),
         },
+        "shareholders_yield_pct": sh_yield,
+        "key_metrics": key_metrics,
         "statements": statements,
         "has_fundamentals": bool(income_annual and balance_annual),
     }
