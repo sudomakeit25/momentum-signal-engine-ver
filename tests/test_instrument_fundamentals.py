@@ -101,7 +101,12 @@ class TestEmptyFallback:
         monkeypatch.setattr(ifund.fmp_client, "get_key_metrics_ttm", lambda s: {})
         monkeypatch.setattr(ifund.fmp_client, "get_income_statement", lambda s, **k: [])
         monkeypatch.setattr(ifund.fmp_client, "get_balance_sheet", lambda s, **k: [])
+        monkeypatch.setattr(ifund.fmp_client, "get_cash_flow", lambda s, **k: [])
         monkeypatch.setattr(ifund.fmp_client, "get_enterprise_values", lambda s, **k: [])
+
+        # Block the Alpaca fallback for this test by patching get_bars
+        from src.data import client as _price_client
+        monkeypatch.setattr(_price_client, "get_bars", lambda s, **k: None)
 
         r = ifund.get_fundamentals("FAKE")
         assert r["header"]["symbol"] == "FAKE"
@@ -110,6 +115,28 @@ class TestEmptyFallback:
         assert r["fair_value"]["fair_value"] is None
         assert r["altman_z"]["latest"] is None
         assert r["has_fundamentals"] is False
+
+    def test_price_falls_back_to_alpaca(self, monkeypatch):
+        """When FMP is unavailable, header.price should fall back to Alpaca close."""
+        import pandas as pd
+        monkeypatch.setattr(ifund.fmp_client, "get_company_profile", lambda s: {})
+        monkeypatch.setattr(ifund.fmp_client, "get_quote", lambda s: {})
+        monkeypatch.setattr(ifund.fmp_client, "get_key_metrics_ttm", lambda s: {})
+        monkeypatch.setattr(ifund.fmp_client, "get_income_statement", lambda s, **k: [])
+        monkeypatch.setattr(ifund.fmp_client, "get_balance_sheet", lambda s, **k: [])
+        monkeypatch.setattr(ifund.fmp_client, "get_cash_flow", lambda s, **k: [])
+        monkeypatch.setattr(ifund.fmp_client, "get_enterprise_values", lambda s, **k: [])
+
+        from src.data import client as _price_client
+        fake_bars = pd.DataFrame(
+            {"close": [95.0, 97.5, 100.25]},
+            index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]),
+        )
+        monkeypatch.setattr(_price_client, "get_bars", lambda s, **k: fake_bars)
+
+        r = ifund.get_fundamentals("FAKE")
+        assert r["header"]["price"] == 100.25
+        assert r["header"]["last_close"] == 100.25
 
     def test_with_data_populates(self, monkeypatch):
         monkeypatch.setattr(ifund.fmp_client, "get_company_profile", lambda s: {

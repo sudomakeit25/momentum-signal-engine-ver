@@ -258,6 +258,20 @@ def get_fundamentals(symbol: str) -> dict:
         "next_earnings": quote.get("earningsAnnouncement") or "",
     }
 
+    # Fall back to Alpaca close when FMP is unavailable so the overview header
+    # still shows a price even on a free-tier deployment.
+    if header["price"] == 0.0:
+        try:
+            from src.data import client as price_client
+            bars = price_client.get_bars(symbol, days=5)
+            if bars is not None and not bars.empty:
+                last_close = float(bars["close"].iloc[-1])
+                header["price"] = last_close
+                if header["last_close"] == 0.0:
+                    header["last_close"] = last_close
+        except Exception:
+            pass
+
     # Income series for the Sales vs Net Income chart (oldest first)
     income_series = []
     for row in sorted(income_annual, key=lambda r: r.get("date", "")):

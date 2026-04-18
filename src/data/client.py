@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.enums import Adjustment
 from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
@@ -89,6 +90,7 @@ def get_bars(
             symbol_or_symbols=symbol,
             timeframe=timeframe,
             start=start,
+            adjustment=Adjustment.ALL,
         )
         barset = client.get_stock_bars(request)
     bars = barset.df
@@ -146,6 +148,7 @@ def get_multi_bars(
                 symbol_or_symbols=chunk,
                 timeframe=timeframe,
                 start=start,
+                adjustment=Adjustment.ALL,
             )
             return chunk, client.get_stock_bars(request).df
 
