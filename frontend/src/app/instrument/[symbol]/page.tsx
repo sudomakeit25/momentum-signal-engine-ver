@@ -10,7 +10,9 @@ import {
   useInstrumentIndicators,
   useInstrumentChart,
   useInstrumentNews,
+  useMarketNews,
 } from "@/hooks/use-trading";
+import { useWatchlist } from "@/hooks/use-watchlist";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -1640,56 +1642,152 @@ function StatementTable({
   );
 }
 
-/* --------------- News tab --------------- */
+/* --------------- News tab (Webull-style) --------------- */
 
 type NewsArticle = {
   source: string; title: string; description: string; link: string;
   pub_date: string; sentiment_score: number; sentiment: string;
+  symbols?: string[];
 };
 
+type NewsSubTab = "symbol" | "market" | "watchlist";
+
 function NewsTab({ symbol }: { symbol: string }) {
-  const { data, isLoading } = useInstrumentNews(symbol);
-  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
-  const articles = ((data as { articles: NewsArticle[] } | undefined)?.articles) ?? [];
-  if (articles.length === 0) {
-    return (
-      <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
-        No news mentioning {symbol} in the recent feed.
-      </div>
-    );
-  }
-  return (
-    <ul className="space-y-2">
-      {articles.map((a, i) => (
-        <li key={i} className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <a
-              href={a.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium text-cyan-400 hover:underline"
-            >
-              {a.title}
-            </a>
-            <span
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-mono uppercase",
-                a.sentiment === "positive" && "bg-emerald-500/20 text-emerald-300",
-                a.sentiment === "negative" && "bg-red-500/20 text-red-300",
-                a.sentiment === "neutral" && "bg-zinc-700 text-zinc-300",
-              )}
-            >
-              {a.sentiment} {a.sentiment_score > 0 ? "+" : ""}{a.sentiment_score.toFixed(1)}
-            </span>
-          </div>
-          <div className="mt-1 text-xs text-zinc-500">
-            {a.source} · {a.pub_date?.slice(0, 16)}
-          </div>
-          {a.description && (
-            <p className="mt-1 text-xs text-zinc-400 line-clamp-2">{a.description}</p>
-          )}
-        </li>
-      ))}
-    </ul>
+  const [sub, setSub] = useState<NewsSubTab>("symbol");
+  const { symbols: watchlist } = useWatchlist();
+  const { data: symbolData, isLoading: symbolLoading } = useInstrumentNews(symbol, sub === "symbol");
+  const { data: marketData, isLoading: marketLoading } = useMarketNews(sub !== "symbol");
+
+  const symbolArticles = ((symbolData as { articles: NewsArticle[] } | undefined)?.articles) ?? [];
+  const allArticles = ((marketData as { articles: NewsArticle[] } | undefined)?.articles) ?? [];
+  const watchlistArticles = allArticles.filter(
+    (a) => a.symbols?.some((s) => watchlist.includes(s)),
   );
+
+  const isLoading =
+    (sub === "symbol" && symbolLoading) ||
+    (sub !== "symbol" && marketLoading);
+  const articles =
+    sub === "symbol" ? symbolArticles
+    : sub === "market" ? allArticles
+    : watchlistArticles;
+
+  return (
+    <div className="space-y-3">
+      {/* Sub-tabs */}
+      <div className="flex items-center gap-4 border-b border-zinc-800">
+        {[
+          { key: "symbol", label: `${symbol} News`, count: symbolArticles.length },
+          { key: "market", label: "Market News", count: allArticles.length },
+          { key: "watchlist", label: "Watchlist News", count: watchlistArticles.length },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setSub(t.key as NewsSubTab)}
+            className={cn(
+              "relative px-1 py-2 text-xs transition",
+              sub === t.key
+                ? "text-cyan-400"
+                : "text-zinc-400 hover:text-zinc-200",
+            )}
+          >
+            {t.label}
+            {t.count > 0 && (
+              <span className="ml-1 text-[10px] text-zinc-500">({t.count})</span>
+            )}
+            {sub === t.key && (
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-cyan-500" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {isLoading && <Skeleton className="h-64 w-full bg-zinc-800" />}
+
+      {!isLoading && articles.length === 0 && (
+        <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
+          {sub === "symbol"
+            ? `No news mentioning ${symbol} in the recent feed.`
+            : sub === "watchlist"
+            ? watchlist.length === 0
+              ? "Your watchlist is empty. Add symbols to see filtered news."
+              : "No recent news for your watchlist symbols."
+            : "No articles available."}
+        </div>
+      )}
+
+      {!isLoading && articles.length > 0 && (
+        <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 bg-zinc-900/30">
+          {articles.map((a, i) => (
+            <li key={i} className="flex items-start gap-3 px-3 py-3 hover:bg-zinc-800/30">
+              <SentimentBadge sentiment={a.sentiment} />
+              <div className="flex-1 min-w-0">
+                <a
+                  href={a.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-sm text-zinc-100 hover:text-cyan-300"
+                >
+                  {a.title}
+                </a>
+                {a.description && (
+                  <p className="mt-0.5 text-xs text-zinc-500 line-clamp-1">
+                    {a.description}
+                  </p>
+                )}
+                {sub !== "symbol" && a.symbols && a.symbols.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {a.symbols.slice(0, 5).map((s) => (
+                      <Link
+                        key={s}
+                        href={`/instrument/${s}`}
+                        className="rounded bg-zinc-800 px-1 py-0 text-[10px] font-mono text-cyan-400 hover:bg-zinc-700"
+                      >
+                        {s}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex-shrink-0 whitespace-nowrap text-[10px] text-zinc-500">
+                {a.source} · {timeAgo(a.pub_date)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function SentimentBadge({ sentiment }: { sentiment: string }) {
+  const cfg: Record<string, { label: string; cls: string }> = {
+    positive: { label: "Positive", cls: "bg-sky-500/20 text-sky-300" },
+    negative: { label: "Negative", cls: "bg-red-500/20 text-red-300" },
+    neutral: { label: "Neutral", cls: "bg-zinc-700/50 text-zinc-300" },
+  };
+  const c = cfg[sentiment] ?? cfg.neutral;
+  return (
+    <span
+      className={cn(
+        "flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+        c.cls,
+      )}
+    >
+      {c.label}
+    </span>
+  );
+}
+
+function timeAgo(iso: string | undefined): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!t) return "";
+  const diff = Date.now() - t;
+  const h = Math.floor(diff / (1000 * 60 * 60));
+  if (h < 1) return "just now";
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
 }

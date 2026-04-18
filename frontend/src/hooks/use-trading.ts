@@ -201,6 +201,15 @@ export function useInstrumentNews(symbol: string, enabled = true) {
   });
 }
 
+export function useMarketNews(enabled = true) {
+  return useQuery({
+    queryKey: ["market-news"],
+    queryFn: () => apiFetch<Record<string, unknown>>("/news/feed"),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useIndustryList() {
   return useQuery({
     queryKey: ["rankings-industries"],
