@@ -2574,6 +2574,39 @@ def instrument_news(symbol: str, limit: int = Query(default=20, ge=1, le=50)):
     return result
 
 
+# --- Industry Rankings + Sector Map ---
+
+from src.scanner.industry_rankings import (
+    get_industry_ranking,
+    list_known_industries,
+)
+from src.scanner.sector_map import get_sector_map
+
+
+@router.get("/rankings/industries")
+def rankings_industries():
+    """List the industry slugs recognized by the rankings feature."""
+    return list_known_industries()
+
+
+@router.get("/rankings/industry/{industry_slug}")
+def rankings_industry(industry_slug: str, limit: int = Query(default=30, ge=5, le=100)):
+    """Ranked companies in an industry with Z/F/M scores."""
+    return get_industry_ranking(industry_slug, limit=limit)
+
+
+@router.get("/sector-map")
+def sector_map(days: int = Query(default=365, ge=90, le=1825)):
+    """Sector ETF cumulative-return time series (for sector-rotation chart)."""
+    cache_key = f"sector_map_{days}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    result = get_sector_map(days=days)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen

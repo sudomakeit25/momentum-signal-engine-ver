@@ -200,3 +200,30 @@ export function useInstrumentNews(symbol: string, enabled = true) {
     staleTime: 10 * 60 * 1000,
   });
 }
+
+export function useIndustryList() {
+  return useQuery({
+    queryKey: ["rankings-industries"],
+    queryFn: () => apiFetch<{ slug: string; label: string }[]>("/rankings/industries"),
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+export function useIndustryRanking(slug: string) {
+  return useQuery({
+    queryKey: ["industry-ranking", slug],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/rankings/industry/${slug}`),
+    enabled: !!slug,
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+export function useSectorMap(days = 365) {
+  return useQuery({
+    queryKey: ["sector-map", days],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>("/sector-map", { days }),
+    staleTime: 60 * 60 * 1000,
+  });
+}

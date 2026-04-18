@@ -30,6 +30,8 @@ const PAGES = [
   { href: "/stock-screener", label: "Stock Screener (Yahoo)" },
   { href: "/holdings", label: "My Holdings" },
   { href: "/instrument/AAPL", label: "Instrument Page (example: AAPL)" },
+  { href: "/sector-map", label: "Sector Map" },
+  { href: "/rankings", label: "Industry Rankings" },
   { href: "/analyzer", label: "Stock Analyzer" },
   { href: "/trends", label: "Multi-Year Trends" },
 ];

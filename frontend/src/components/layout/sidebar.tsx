@@ -52,6 +52,7 @@ import {
   LineChart,
   Search,
   Briefcase,
+  ListOrdered,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,8 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/trends", label: "Multi-Year Trends", icon: LineChart },
       { href: "/technical", label: "Technical Tools", icon: Crosshair },
       { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
+      { href: "/sector-map", label: "Sector Map", icon: Activity },
+      { href: "/rankings", label: "Industry Rankings", icon: ListOrdered },
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
       { href: "/options-builder", label: "Options Builder", icon: Wrench },
       { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },
