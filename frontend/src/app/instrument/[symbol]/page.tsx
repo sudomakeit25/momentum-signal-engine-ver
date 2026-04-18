@@ -800,6 +800,7 @@ function MetricCell({ label, value }: { label: string; value: string }) {
 /* --------------- Seasonality --------------- */
 
 type SeasonalityMonth = {
+  month: number;
   label: string;
   avg_pct: number | null;
   median_pct: number | null;
@@ -807,8 +808,18 @@ type SeasonalityMonth = {
   sample_size: number;
 };
 
+type HeatmapRow = { year: number } & Record<string, number | undefined>;
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 function SeasonalityTab({ symbol }: { symbol: string }) {
   const { data, isLoading } = useInstrumentSeasonality(symbol);
+  const [sampleSize, setSampleSize] = useState<number | "all">("all");
+  const [showCharts, setShowCharts] = useState(false);
+
   if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
   if (!data) return null;
   const err = data.error as string | undefined;
@@ -819,130 +830,261 @@ function SeasonalityTab({ symbol }: { symbol: string }) {
       </div>
     );
   }
-  const months = (data.months as SeasonalityMonth[]) ?? [];
-  const heatmap = (data.heatmap as Record<string, number | string>[]) ?? [];
-  const best = data.best_month as SeasonalityMonth | null;
-  const worst = data.worst_month as SeasonalityMonth | null;
+
+  const fullHeatmap = ((data.heatmap as HeatmapRow[]) ?? []).slice().sort(
+    (a, b) => (b.year as number) - (a.year as number),
+  );
+
+  const rows =
+    sampleSize === "all" ? fullHeatmap : fullHeatmap.slice(0, sampleSize as number);
+
+  // Recompute aggregates from the filtered rows so the top row reflects
+  // exactly the selected sample.
+  const aggregates: SeasonalityMonth[] = MONTH_LABELS.map((label, i) => {
+    const values: number[] = [];
+    for (const row of rows) {
+      const v = row[label];
+      if (typeof v === "number") values.push(v);
+    }
+    if (!values.length) {
+      return { month: i + 1, label, avg_pct: null, median_pct: null, win_rate: null, sample_size: 0 };
+    }
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const wins = values.filter((v) => v > 0).length;
+    return {
+      month: i + 1,
+      label,
+      avg_pct: avg,
+      median_pct: null,
+      win_rate: (wins / values.length) * 100,
+      sample_size: values.length,
+    };
+  });
+
+  const sampleOptions: (number | "all")[] = [5, 10, 15, 20, 25, "all"];
+
+  function csvEscape(s: string): string {
+    return s.includes(",") ? `"${s}"` : s;
+  }
+  function downloadCsv() {
+    const header = ["Year", ...MONTH_LABELS];
+    const lines: string[] = [header.join(",")];
+    lines.push(
+      [
+        "Probability %",
+        ...aggregates.map((m) =>
+          m.win_rate !== null ? `${m.win_rate.toFixed(0)}%` : "--"
+        ),
+      ].join(",")
+    );
+    lines.push(
+      [
+        "Average return %",
+        ...aggregates.map((m) =>
+          m.avg_pct !== null ? `${m.avg_pct.toFixed(2)}%` : "--"
+        ),
+      ].join(",")
+    );
+    for (const row of rows) {
+      lines.push(
+        [
+          String(row.year),
+          ...MONTH_LABELS.map((m) =>
+            typeof row[m] === "number" ? `${(row[m] as number).toFixed(2)}%` : "--"
+          ),
+        ].map(csvEscape).join(",")
+      );
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${symbol}-seasonality.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">Years covered</div>
-          <div className="mt-1 font-mono text-lg">{String(data.years_covered ?? 0)}</div>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex overflow-hidden rounded-md border border-zinc-700">
+          {sampleOptions.map((opt) => (
+            <button
+              key={String(opt)}
+              onClick={() => setSampleSize(opt)}
+              className={cn(
+                "px-3 py-1 text-xs transition",
+                sampleSize === opt
+                  ? "bg-cyan-600 text-white"
+                  : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800",
+              )}
+            >
+              {opt === "all" ? "All" : opt}
+            </button>
+          ))}
         </div>
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-          <div className="text-[10px] uppercase text-emerald-300">Best month</div>
-          <div className="mt-1 font-mono text-lg text-emerald-200">
-            {best ? `${best.label} (+${best.avg_pct?.toFixed(2)}%)` : "-"}
-          </div>
-          <div className="text-[10px] text-emerald-300/80">
-            {best && best.win_rate !== null ? `win rate ${best.win_rate}%` : ""}
-          </div>
-        </div>
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-          <div className="text-[10px] uppercase text-red-300">Worst month</div>
-          <div className="mt-1 font-mono text-lg text-red-200">
-            {worst ? `${worst.label} (${worst.avg_pct?.toFixed(2)}%)` : "-"}
-          </div>
-          <div className="text-[10px] text-red-300/80">
-            {worst && worst.win_rate !== null ? `win rate ${worst.win_rate}%` : ""}
-          </div>
+        <span className="text-[10px] text-zinc-500">
+          {rows.length} {rows.length === 1 ? "year" : "years"} loaded
+        </span>
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={downloadCsv}
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
+          >
+            Download CSV
+          </button>
+          <button
+            onClick={() => setShowCharts((v) => !v)}
+            className={cn(
+              "rounded-md border px-3 py-1 text-xs",
+              showCharts
+                ? "border-cyan-500 bg-cyan-600 text-white"
+                : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800",
+            )}
+          >
+            {showCharts ? "Hide" : "Show"} Seasonality Charts
+          </button>
         </div>
       </div>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
-          Average monthly return (all years)
-        </div>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={months} margin={{ top: 20, right: 16, left: 8, bottom: 4 }}>
-            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
-            <XAxis dataKey="label" stroke="#71717a" fontSize={11} />
-            <YAxis
-              stroke="#71717a"
-              fontSize={11}
-              tickFormatter={(v) => `${v}%`}
-            />
-            <Tooltip
-              contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
-              formatter={(v) => `${Number(v).toFixed(2)}%`}
-            />
-            <ReferenceLine y={0} stroke="#71717a" />
-            <Bar dataKey="avg_pct">
-              {months.map((m, i) => (
-                <Cell
-                  key={i}
-                  fill={
-                    m.avg_pct === null
-                      ? "#3f3f46"
-                      : m.avg_pct >= 0
-                      ? "#34d399"
-                      : "#f87171"
-                  }
-                />
+      {/* Main table — Probability row, Average return row, then per-year rows */}
+      <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/50">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="border-b border-zinc-800 bg-zinc-900/80">
+              <th className="px-3 py-2 text-left text-[10px] uppercase text-zinc-400">
+                Year
+              </th>
+              {MONTH_LABELS.map((m) => (
+                <th
+                  key={m}
+                  className="px-2 py-2 text-[10px] uppercase text-zinc-400"
+                  style={{ minWidth: 60 }}
+                >
+                  {m}
+                </th>
               ))}
-              <LabelList
-                dataKey="avg_pct"
-                position="top"
-                formatter={(v) => (v === null ? "" : `${Number(v).toFixed(1)}%`)}
-                style={{ fontSize: 10, fill: "#a1a1aa" }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-zinc-800 bg-zinc-900/40 font-semibold">
+              <td className="px-3 py-2 text-left text-zinc-300">Probability %</td>
+              {aggregates.map((m) => (
+                <td
+                  key={m.label}
+                  className="px-2 py-2 text-center"
+                  style={{ background: probabilityCellBg(m.win_rate) }}
+                >
+                  {m.win_rate !== null ? (
+                    <span className={cn(
+                      "inline-flex items-center gap-0.5",
+                      m.win_rate >= 50 ? "text-emerald-300" : "text-red-300",
+                    )}>
+                      {m.win_rate >= 50 ? "▲" : "▼"} {m.win_rate.toFixed(0)}%
+                    </span>
+                  ) : "--"}
+                </td>
+              ))}
+            </tr>
+            <tr className="border-b-2 border-zinc-700 bg-zinc-900/60 font-semibold">
+              <td className="px-3 py-2 text-left text-zinc-300">Average return %</td>
+              {aggregates.map((m) => (
+                <td
+                  key={m.label}
+                  className="px-2 py-2 text-center"
+                  style={{ background: heatCellBg(m.avg_pct ?? undefined) }}
+                >
+                  {m.avg_pct !== null
+                    ? `${m.avg_pct > 0 ? "+" : ""}${m.avg_pct.toFixed(2)}%`
+                    : "--"}
+                </td>
+              ))}
+            </tr>
+            {rows.map((row) => (
+              <tr key={row.year} className="border-b border-zinc-800/60 hover:bg-zinc-800/30">
+                <td className="px-3 py-2 text-left text-zinc-400">{row.year}</td>
+                {MONTH_LABELS.map((m) => {
+                  const v = row[m] as number | undefined;
+                  return (
+                    <td
+                      key={m}
+                      className="px-2 py-2 text-center"
+                      style={{ background: heatCellBg(v) }}
+                    >
+                      {v === undefined
+                        ? <span className="text-zinc-600">--</span>
+                        : <span className={v >= 0 ? "text-emerald-200" : "text-red-200"}>
+                            {v > 0 ? "+" : ""}{v.toFixed(2)}%
+                          </span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {heatmap.length > 0 && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+      {/* Optional charts section */}
+      {showCharts && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
           <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
-            Year × Month heatmap (% return)
+            Average monthly return ({sampleSize === "all" ? "all years" : `last ${sampleSize}`})
           </div>
-          <div className="overflow-x-auto">
-            <table className="text-xs font-mono">
-              <thead>
-                <tr>
-                  <th className="p-2 text-zinc-400">Year</th>
-                  {[
-                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-                  ].map((m) => (
-                    <th key={m} className="px-2 py-1 text-zinc-400">{m}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {heatmap.map((row) => (
-                  <tr key={String(row.year)}>
-                    <td className="px-2 py-1 text-right text-zinc-400">{String(row.year)}</td>
-                    {[
-                      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-                    ].map((m) => {
-                      const v = row[m] as number | undefined;
-                      return (
-                        <td
-                          key={m}
-                          className="px-2 py-1 text-center"
-                          style={{
-                            background: heatCellBg(v),
-                            color: v === undefined ? "#52525b" : "#fafafa",
-                            minWidth: 46,
-                          }}
-                        >
-                          {v === undefined ? "-" : `${v.toFixed(1)}%`}
-                        </td>
-                      );
-                    })}
-                  </tr>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={aggregates} margin={{ top: 20, right: 16, left: 8, bottom: 4 }}>
+              <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+              <XAxis dataKey="label" stroke="#71717a" fontSize={11} />
+              <YAxis
+                stroke="#71717a"
+                fontSize={11}
+                tickFormatter={(v) => `${v}%`}
+              />
+              <Tooltip
+                contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
+                formatter={(v) => `${Number(v).toFixed(2)}%`}
+              />
+              <ReferenceLine y={0} stroke="#71717a" />
+              <Bar dataKey="avg_pct">
+                {aggregates.map((m, i) => (
+                  <Cell
+                    key={i}
+                    fill={
+                      m.avg_pct === null
+                        ? "#3f3f46"
+                        : m.avg_pct >= 0
+                        ? "#34d399"
+                        : "#f87171"
+                    }
+                  />
                 ))}
-              </tbody>
-            </table>
-          </div>
+                <LabelList
+                  dataKey="avg_pct"
+                  position="top"
+                  formatter={(v) => (v === null ? "" : `${Number(v).toFixed(1)}%`)}
+                  style={{ fontSize: 10, fill: "#a1a1aa" }}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
     </div>
   );
+}
+
+function probabilityCellBg(v: number | null): string {
+  if (v === null) return "transparent";
+  // 0-100 → green for >=50, red for <50
+  if (v >= 50) {
+    const strength = Math.min(1, (v - 50) / 50);
+    return `rgba(52, 211, 153, ${0.12 + strength * 0.4})`;
+  }
+  const strength = Math.min(1, (50 - v) / 50);
+  return `rgba(248, 113, 113, ${0.12 + strength * 0.4})`;
 }
 
 function heatCellBg(v: number | undefined): string {
