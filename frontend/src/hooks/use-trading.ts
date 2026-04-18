@@ -160,3 +160,43 @@ export function useInstrumentFundamentals(symbol: string) {
     staleTime: 60 * 60 * 1000,
   });
 }
+
+export function useInstrumentSeasonality(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-seasonality", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/seasonality`),
+    enabled: enabled && !!symbol,
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function useInstrumentIndicators(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-indicators", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/indicators`),
+    enabled: enabled && !!symbol,
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+export function useInstrumentChart(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-chart", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/chart/${symbol}`),
+    enabled: enabled && !!symbol,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useInstrumentNews(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-news", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/news`),
+    enabled: enabled && !!symbol,
+    staleTime: 10 * 60 * 1000,
+  });
+}

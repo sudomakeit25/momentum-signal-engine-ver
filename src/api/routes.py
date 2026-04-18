@@ -2525,6 +2525,55 @@ def instrument_fundamentals(symbol: str):
     return result
 
 
+from src.scanner.seasonality import analyze_seasonality
+
+
+@router.get("/instrument/{symbol}/seasonality")
+def instrument_seasonality(
+    symbol: str,
+    years: int = Query(default=10, ge=3, le=20),
+):
+    """Monthly seasonality stats for the instrument page."""
+    cache_key = f"instr_seas_{symbol.upper()}_{years}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    result = analyze_seasonality(symbol, years=years)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+from src.scanner.instrument_indicators import get_indicator_series
+
+
+@router.get("/instrument/{symbol}/indicators")
+def instrument_indicators(symbol: str):
+    """Indicator series (RSI, MACD, Bollinger) for Overbought-Oversold tab."""
+    cache_key = f"instr_ind_{symbol.upper()}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
+        return cached[1]
+    result = get_indicator_series(symbol)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/instrument/{symbol}/news")
+def instrument_news(symbol: str, limit: int = Query(default=20, ge=1, le=50)):
+    """Articles mentioning the symbol, sorted by sentiment strength."""
+    sym = symbol.upper()
+    cache_key = f"instr_news_{sym}_{limit}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_MED:
+        return cached[1]
+    from src.scanner.news_sentiment import fetch_news
+    articles = fetch_news([sym])
+    filtered = [a for a in articles if sym in a.get("symbols", [])][:limit]
+    result = {"symbol": sym, "count": len(filtered), "articles": filtered}
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen

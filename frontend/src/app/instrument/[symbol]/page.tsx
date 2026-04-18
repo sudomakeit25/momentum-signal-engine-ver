@@ -6,12 +6,17 @@ import {
   useAnalyzer,
   useMultiYearTrends,
   useInstrumentFundamentals,
+  useInstrumentSeasonality,
+  useInstrumentIndicators,
+  useInstrumentChart,
+  useInstrumentNews,
 } from "@/hooks/use-trading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, LabelList,
+  CartesianGrid, LabelList, LineChart, Line, ReferenceLine,
+  ComposedChart, Area, Cell,
 } from "recharts";
 
 const TABS = [
@@ -193,9 +198,10 @@ export default function InstrumentPage({
           loading={fLoading}
         />
       )}
-      {(tab === "Seasonality" || tab === "Pattern" || tab === "Overbought - Oversold" || tab === "News") && (
-        <PlaceholderTab tab={tab} symbol={symbol} />
-      )}
+      {tab === "Seasonality" && <SeasonalityTab symbol={symbol} />}
+      {tab === "Pattern" && <PatternTab symbol={symbol} />}
+      {tab === "Overbought - Oversold" && <IndicatorsTab symbol={symbol} />}
+      {tab === "News" && <NewsTab symbol={symbol} />}
     </div>
   );
 }
@@ -557,31 +563,451 @@ function MetricCell({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* --------------- Placeholder tabs --------------- */
+/* --------------- Seasonality --------------- */
 
-function PlaceholderTab({ tab, symbol }: { tab: string; symbol: string }) {
-  const links: Record<string, string> = {
-    Seasonality: "",
-    Pattern: `/technical?symbol=${symbol}`,
-    "Overbought - Oversold": `/technical?symbol=${symbol}`,
-    News: `/news`,
-  };
-  const link = links[tab];
+type SeasonalityMonth = {
+  label: string;
+  avg_pct: number | null;
+  median_pct: number | null;
+  win_rate: number | null;
+  sample_size: number;
+};
+
+function SeasonalityTab({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useInstrumentSeasonality(symbol);
+  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
+  if (!data) return null;
+  const err = data.error as string | undefined;
+  if (err) {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+        {err}
+      </div>
+    );
+  }
+  const months = (data.months as SeasonalityMonth[]) ?? [];
+  const heatmap = (data.heatmap as Record<string, number | string>[]) ?? [];
+  const best = data.best_month as SeasonalityMonth | null;
+  const worst = data.worst_month as SeasonalityMonth | null;
+
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-8 text-center">
-      <div className="mb-2 text-sm font-semibold text-zinc-200">{tab} coming soon</div>
-      <div className="text-xs text-zinc-500">
-        {link ? (
-          <>
-            Closest existing page:{" "}
-            <Link href={link} className="text-cyan-400 hover:underline">
-              {link}
-            </Link>
-          </>
-        ) : (
-          "This tab will be implemented in Phase 2."
-        )}
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="text-[10px] uppercase text-zinc-500">Years covered</div>
+          <div className="mt-1 font-mono text-lg">{String(data.years_covered ?? 0)}</div>
+        </div>
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+          <div className="text-[10px] uppercase text-emerald-300">Best month</div>
+          <div className="mt-1 font-mono text-lg text-emerald-200">
+            {best ? `${best.label} (+${best.avg_pct?.toFixed(2)}%)` : "-"}
+          </div>
+          <div className="text-[10px] text-emerald-300/80">
+            {best && best.win_rate !== null ? `win rate ${best.win_rate}%` : ""}
+          </div>
+        </div>
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+          <div className="text-[10px] uppercase text-red-300">Worst month</div>
+          <div className="mt-1 font-mono text-lg text-red-200">
+            {worst ? `${worst.label} (${worst.avg_pct?.toFixed(2)}%)` : "-"}
+          </div>
+          <div className="text-[10px] text-red-300/80">
+            {worst && worst.win_rate !== null ? `win rate ${worst.win_rate}%` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+          Average monthly return (all years)
+        </div>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={months} margin={{ top: 20, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="label" stroke="#71717a" fontSize={11} />
+            <YAxis
+              stroke="#71717a"
+              fontSize={11}
+              tickFormatter={(v) => `${v}%`}
+            />
+            <Tooltip
+              contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
+              formatter={(v) => `${Number(v).toFixed(2)}%`}
+            />
+            <ReferenceLine y={0} stroke="#71717a" />
+            <Bar dataKey="avg_pct">
+              {months.map((m, i) => (
+                <Cell
+                  key={i}
+                  fill={
+                    m.avg_pct === null
+                      ? "#3f3f46"
+                      : m.avg_pct >= 0
+                      ? "#34d399"
+                      : "#f87171"
+                  }
+                />
+              ))}
+              <LabelList
+                dataKey="avg_pct"
+                position="top"
+                formatter={(v) => (v === null ? "" : `${Number(v).toFixed(1)}%`)}
+                style={{ fontSize: 10, fill: "#a1a1aa" }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {heatmap.length > 0 && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            Year × Month heatmap (% return)
+          </div>
+          <div className="overflow-x-auto">
+            <table className="text-xs font-mono">
+              <thead>
+                <tr>
+                  <th className="p-2 text-zinc-400">Year</th>
+                  {[
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                  ].map((m) => (
+                    <th key={m} className="px-2 py-1 text-zinc-400">{m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {heatmap.map((row) => (
+                  <tr key={String(row.year)}>
+                    <td className="px-2 py-1 text-right text-zinc-400">{String(row.year)}</td>
+                    {[
+                      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                    ].map((m) => {
+                      const v = row[m] as number | undefined;
+                      return (
+                        <td
+                          key={m}
+                          className="px-2 py-1 text-center"
+                          style={{
+                            background: heatCellBg(v),
+                            color: v === undefined ? "#52525b" : "#fafafa",
+                            minWidth: 46,
+                          }}
+                        >
+                          {v === undefined ? "-" : `${v.toFixed(1)}%`}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function heatCellBg(v: number | undefined): string {
+  if (v === undefined) return "transparent";
+  const clamped = Math.max(-10, Math.min(10, v)) / 10;
+  if (clamped > 0) return `rgba(52, 211, 153, ${0.15 + clamped * 0.5})`;
+  return `rgba(248, 113, 113, ${0.15 - clamped * 0.5})`;
+}
+
+/* --------------- Pattern tab --------------- */
+
+type ChartPayload = {
+  bars: { timestamp: string; close: number; high: number; low: number }[];
+  technical_analysis: {
+    support_resistance: { level: number; type: string; strength: number }[];
+    trendlines: { start_price: number; end_price: number; trend_type: string; strength: number }[];
+    patterns: { name: string; pattern_type: string; confidence: number; description: string }[];
+    trend_summary: string;
+  } | null;
+};
+
+function PatternTab({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useInstrumentChart(symbol);
+  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
+  const payload = data as ChartPayload | undefined;
+  const ta = payload?.technical_analysis;
+  if (!ta) {
+    return (
+      <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
+        No technical analysis available for this symbol.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-1 text-xs font-semibold uppercase text-zinc-400">
+          Trend Summary
+        </div>
+        <div className="text-sm text-zinc-200">{ta.trend_summary}</div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            Support / Resistance
+          </div>
+          {ta.support_resistance.length === 0 ? (
+            <div className="text-xs text-zinc-500">none detected</div>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {ta.support_resistance.slice(0, 6).map((lv, i) => (
+                <li key={i} className="flex justify-between">
+                  <span
+                    className={cn(
+                      lv.type.includes("support") ? "text-emerald-400" : "text-red-400"
+                    )}
+                  >
+                    {lv.type}
+                  </span>
+                  <span className="font-mono">${lv.level.toFixed(2)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            Trendlines
+          </div>
+          {ta.trendlines.length === 0 ? (
+            <div className="text-xs text-zinc-500">none detected</div>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {ta.trendlines.slice(0, 6).map((tl, i) => (
+                <li key={i} className="flex justify-between">
+                  <span
+                    className={cn(
+                      tl.trend_type === "uptrend" ? "text-emerald-400" : "text-red-400"
+                    )}
+                  >
+                    {tl.trend_type}
+                  </span>
+                  <span className="font-mono">
+                    ${tl.start_price.toFixed(2)} → ${tl.end_price.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            Chart Patterns
+          </div>
+          {ta.patterns.length === 0 ? (
+            <div className="text-xs text-zinc-500">none detected</div>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {ta.patterns.map((p, i) => (
+                <li key={i}>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-200">{p.name}</span>
+                    <span
+                      className={cn(
+                        "text-xs font-mono",
+                        p.pattern_type === "bullish" ? "text-emerald-400" : "text-red-400"
+                      )}
+                    >
+                      {(p.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="text-xs text-zinc-500">{p.description}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
+  );
+}
+
+/* --------------- Overbought-Oversold tab --------------- */
+
+type IndSeries = {
+  snapshot: {
+    rsi: number | null;
+    macd_line: number | null;
+    macd_signal: number | null;
+    macd_hist: number | null;
+    bb_upper: number | null;
+    bb_lower: number | null;
+    bb_pct: number | null;
+  };
+  series: {
+    date: string; close: number;
+    rsi: number | null; macd: number | null;
+    macd_signal: number | null; macd_hist: number | null;
+    bb_upper: number | null; bb_lower: number | null;
+  }[];
+  verdict: string;
+};
+
+const VERDICT_CLASS: Record<string, string> = {
+  overbought: "text-red-400",
+  bullish: "text-emerald-300",
+  neutral: "text-zinc-300",
+  bearish: "text-orange-300",
+  oversold: "text-emerald-400",
+};
+
+function IndicatorsTab({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useInstrumentIndicators(symbol);
+  if (isLoading) return <Skeleton className="h-96 w-full bg-zinc-800" />;
+  const d = data as IndSeries | undefined;
+  if (!d || !d.series) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="text-[10px] uppercase text-zinc-500">RSI (14)</div>
+          <div className="mt-1 font-mono text-lg">
+            {d.snapshot.rsi !== null ? d.snapshot.rsi.toFixed(1) : "-"}
+          </div>
+        </div>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="text-[10px] uppercase text-zinc-500">MACD Hist</div>
+          <div
+            className={cn(
+              "mt-1 font-mono text-lg",
+              d.snapshot.macd_hist !== null && d.snapshot.macd_hist >= 0
+                ? "text-emerald-400"
+                : "text-red-400"
+            )}
+          >
+            {d.snapshot.macd_hist !== null ? d.snapshot.macd_hist.toFixed(3) : "-"}
+          </div>
+        </div>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="text-[10px] uppercase text-zinc-500">BB Position</div>
+          <div className="mt-1 font-mono text-lg">
+            {d.snapshot.bb_pct !== null
+              ? `${(d.snapshot.bb_pct * 100).toFixed(0)}%`
+              : "-"}
+          </div>
+        </div>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="text-[10px] uppercase text-zinc-500">Verdict</div>
+          <div className={cn("mt-1 text-lg font-semibold uppercase", VERDICT_CLASS[d.verdict])}>
+            {d.verdict}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">RSI (14)</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} domain={[0, 100]} />
+            <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+            <ReferenceLine y={70} stroke="#f87171" strokeDasharray="3 3" />
+            <ReferenceLine y={30} stroke="#34d399" strokeDasharray="3 3" />
+            <Line type="monotone" dataKey="rsi" stroke="#a78bfa" dot={false} strokeWidth={1.5} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">MACD</div>
+        <ResponsiveContainer width="100%" height={200}>
+          <ComposedChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} />
+            <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+            <ReferenceLine y={0} stroke="#52525b" />
+            <Bar dataKey="macd_hist" fill="#34d39955" />
+            <Line type="monotone" dataKey="macd" stroke="#60a5fa" dot={false} strokeWidth={1.5} />
+            <Line type="monotone" dataKey="macd_signal" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+          Price with Bollinger Bands
+        </div>
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} />
+            <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+            <Area type="monotone" dataKey="bb_upper" stroke="#3f3f46" fill="#27272a66" />
+            <Area type="monotone" dataKey="bb_lower" stroke="#3f3f46" fill="#09090b" />
+            <Line type="monotone" dataKey="close" stroke="#06b6d4" dot={false} strokeWidth={1.5} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+/* --------------- News tab --------------- */
+
+type NewsArticle = {
+  source: string; title: string; description: string; link: string;
+  pub_date: string; sentiment_score: number; sentiment: string;
+};
+
+function NewsTab({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useInstrumentNews(symbol);
+  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
+  const articles = ((data as { articles: NewsArticle[] } | undefined)?.articles) ?? [];
+  if (articles.length === 0) {
+    return (
+      <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
+        No news mentioning {symbol} in the recent feed.
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {articles.map((a, i) => (
+        <li key={i} className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <a
+              href={a.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium text-cyan-400 hover:underline"
+            >
+              {a.title}
+            </a>
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-mono uppercase",
+                a.sentiment === "positive" && "bg-emerald-500/20 text-emerald-300",
+                a.sentiment === "negative" && "bg-red-500/20 text-red-300",
+                a.sentiment === "neutral" && "bg-zinc-700 text-zinc-300",
+              )}
+            >
+              {a.sentiment} {a.sentiment_score > 0 ? "+" : ""}{a.sentiment_score.toFixed(1)}
+            </span>
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">
+            {a.source} · {a.pub_date?.slice(0, 16)}
+          </div>
+          {a.description && (
+            <p className="mt-1 text-xs text-zinc-400 line-clamp-2">{a.description}</p>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
