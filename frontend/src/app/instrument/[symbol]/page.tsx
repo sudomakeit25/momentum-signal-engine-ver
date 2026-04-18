@@ -1680,6 +1680,16 @@ function IndicatorsTab({ symbol }: { symbol: string }) {
   const { data, isLoading } = useInstrumentIndicators(symbol);
   if (isLoading) return <Skeleton className="h-96 w-full bg-zinc-800" />;
   const d = data as IndSeries | undefined;
+  const err = (data as { error?: string } | undefined)?.error;
+  if (err) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        {err}. For forex / commodity / index instruments, historical data
+        requires FMP Starter plan — panels will populate automatically once
+        configured.
+      </div>
+    );
+  }
   if (!d || !d.series) return null;
 
   return (

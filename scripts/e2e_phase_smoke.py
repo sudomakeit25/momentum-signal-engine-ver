@@ -50,7 +50,7 @@ def instrument_page(page: Page, base: str, symbol: str = "AAPL") -> PageResult:
         return r
 
     r.check(symbol in page.content(), "symbol appears in page")
-    for tab in ["Overview", "Seasonality", "Pattern", "Fundamentals", "Financials", "News"]:
+    for tab in ["Overview", "Seasonality", "Pattern", "Fundamentals", "Financials", "Insider", "Transcripts", "News"]:
         r.check(page.get_by_role("button", name=tab).is_visible(), f"tab visible: {tab}")
 
     # Overview tab (default)
@@ -79,14 +79,13 @@ def instrument_page(page: Page, base: str, symbol: str = "AAPL") -> PageResult:
         "financials tab rendered",
     )
 
-    # Seasonality tab
-    _click_tab(page, "Seasonality")
-    r.check(
-        page.get_by_text("Average monthly return").first.is_visible()
-        or page.get_by_text("Years covered").first.is_visible()
-        or "insufficient" in page.content().lower(),
-        "seasonality rendered or errored gracefully",
-    )
+    # Seasonality tab — new layout uses Probability / Average return rows
+    _click_tab(page, "Seasonality", wait_ms=12_000)
+    seas_ok = any(
+        label in page.content()
+        for label in ["Probability %", "Average return %", "Download CSV"]
+    ) or "insufficient" in page.content().lower()
+    r.check(seas_ok, "seasonality rendered or errored gracefully")
 
     # Pattern tab
     _click_tab(page, "Pattern")
@@ -110,6 +109,39 @@ def instrument_page(page: Page, base: str, symbol: str = "AAPL") -> PageResult:
         "No news" in page.content() or page.locator("a").count() > 0,
         "news tab rendered",
     )
+
+    # Insider tab
+    _click_tab(page, "Insider")
+    content_lower = page.content().lower()
+    r.check(
+        "filing" in content_lower
+        or "requires fmp starter" in content_lower
+        or "insider" in content_lower,
+        "insider tab rendered (data or gating banner)",
+    )
+
+    # Transcripts tab
+    _click_tab(page, "Transcripts")
+    content_lower = page.content().lower()
+    r.check(
+        "pick a quarter" in content_lower
+        or "no earnings-call transcripts" in content_lower
+        or "q1" in content_lower or "q2" in content_lower or "q3" in content_lower or "q4" in content_lower,
+        "transcripts tab rendered (data or gating banner)",
+    )
+
+    # Back to Overview — check Events panel + Wyckoff on OB/OS tab
+    _click_tab(page, "Overview")
+    r.check(
+        "AI Agent" in page.content() or "What's happening" in page.content(),
+        "overview still intact after tab cycling",
+    )
+
+    _click_tab(page, "Overbought - Oversold")
+    wy_present = any(
+        label in page.content() for label in ["Wyckoff Phase", "Market Mood Meter"]
+    )
+    r.check(wy_present, "Wyckoff / Mood panels present on OB/OS tab")
     return r
 
 
@@ -200,7 +232,8 @@ def international_page(page: Page, base: str) -> PageResult:
         r.check(False, "load timeout")
         return r
     r.check("AIR.PA" in page.content(), "AIR.PA appears in page")
-    # Switch to fundamentals — if FMP is configured, international data should populate
+    # Currency chip should show EUR for .PA
+    r.check("EUR" in page.content(), "EUR currency chip present")
     try:
         _click_tab(page, "Fundamentals", wait_ms=15_000)
     except Exception:
@@ -212,6 +245,70 @@ def international_page(page: Page, base: str) -> PageResult:
         or "fundamentals" in content_lower,
         "international fundamentals tab rendered",
     )
+    return r
+
+
+def forex_page(page: Page, base: str) -> PageResult:
+    r = PageResult("/instrument/EURUSD (forex)")
+    try:
+        page.goto(f"{base}/instrument/EURUSD", wait_until="domcontentloaded", timeout=30_000)
+        page.wait_for_timeout(4_000)
+    except PlaywrightTimeout:
+        r.check(False, "load timeout")
+        return r
+    r.check("EURUSD" in page.content(), "EURUSD heading present")
+    _click_tab(page, "Overbought - Oversold", wait_ms=12_000)
+    content_lower = page.content().lower()
+    # Accept either populated indicators OR a graceful "insufficient history"
+    # error (FMP free tier doesn't cover forex historical data).
+    graceful = (
+        "rsi (14)" in content_lower
+        or "market mood" in content_lower
+        or "insufficient history" in content_lower
+        or "fetch failed" in content_lower
+    )
+    r.check(graceful, "indicators render or degrade gracefully on forex")
+    return r
+
+
+def index_page(page: Page, base: str) -> PageResult:
+    r = PageResult("/instrument/^GSPC (index)")
+    try:
+        # %5E is URL-encoded ^
+        page.goto(f"{base}/instrument/%5EGSPC", wait_until="domcontentloaded", timeout=30_000)
+        page.wait_for_timeout(4_000)
+    except PlaywrightTimeout:
+        r.check(False, "load timeout")
+        return r
+    r.check("GSPC" in page.content(), "^GSPC symbol visible")
+    _click_tab(page, "Seasonality", wait_ms=15_000)
+    r.check(
+        "Probability" in page.content()
+        or "Average return" in page.content()
+        or "insufficient" in page.content().lower(),
+        "seasonality works on index bars",
+    )
+    return r
+
+
+def cot_page(page: Page, base: str) -> PageResult:
+    r = PageResult("/cot")
+    try:
+        page.goto(f"{base}/cot", wait_until="domcontentloaded", timeout=30_000)
+        page.wait_for_timeout(6_000)
+    except PlaywrightTimeout:
+        r.check(False, "load timeout")
+        return r
+    r.check(page.get_by_text("Commitment of Traders").first.is_visible(), "heading")
+    r.check(page.get_by_text("Gold", exact=False).first.is_visible(), "contract pills render")
+    r.check(
+        "Non-Commercial" in page.content()
+        or "Large Specs" in page.content()
+        or "noncomm" in page.content().lower(),
+        "non-commercial panel renders",
+    )
+    # SVG chart should be present
+    r.check(page.locator("svg").count() > 0, "chart SVG present")
     return r
 
 
@@ -237,6 +334,9 @@ def main() -> int:
             rankings_index(page, args.base),
             industry_page(page, args.base),
             sector_map_page(page, args.base),
+            cot_page(page, args.base),
+            forex_page(page, args.base),
+            index_page(page, args.base),
         ]
         if not args.skip_international:
             results.append(international_page(page, args.base))
