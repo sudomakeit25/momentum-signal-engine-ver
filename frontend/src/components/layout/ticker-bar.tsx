@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { GlobalSearch } from "./global-search";
 
 const TICKER_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "BTC/USD", "ETH/USD"];
 
@@ -36,19 +37,21 @@ function useTickerData() {
 
 export function TickerBar() {
   const { data } = useTickerData();
-  if (!data || data.length === 0) return null;
 
   return (
-    <div className="hidden md:flex items-center gap-6 overflow-hidden border-b border-zinc-800/50 bg-zinc-950 px-4 py-1 text-[11px]">
-      {data.map((item) => (
-        <div key={item.symbol} className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="font-medium text-zinc-400">{item.symbol}</span>
-          <span className="font-mono text-zinc-300">${item.price.toFixed(2)}</span>
-          <span className={cn("font-mono", item.change_pct >= 0 ? "text-emerald-400" : "text-red-400")}>
-            {item.change_pct >= 0 ? "+" : ""}{item.change_pct.toFixed(1)}%
-          </span>
-        </div>
-      ))}
+    <div className="hidden md:flex items-center gap-4 border-b border-zinc-800/50 bg-zinc-950 px-4 py-1.5 text-[11px]">
+      <GlobalSearch />
+      <div className="flex flex-1 items-center gap-6 overflow-x-auto scrollbar-none">
+        {(data ?? []).map((item) => (
+          <div key={item.symbol} className="flex items-center gap-1.5 whitespace-nowrap">
+            <span className="font-medium text-zinc-400">{item.symbol}</span>
+            <span className="font-mono text-zinc-300">${item.price.toFixed(2)}</span>
+            <span className={cn("font-mono", item.change_pct >= 0 ? "text-emerald-400" : "text-red-400")}>
+              {item.change_pct >= 0 ? "+" : ""}{item.change_pct.toFixed(1)}%
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ const PAGES = [
   { href: "/screener-presets", label: "Preset Screeners" },
   { href: "/stock-screener", label: "Stock Screener (Yahoo)" },
   { href: "/holdings", label: "My Holdings" },
-  { href: "/instrument/AAPL", label: "Instrument Page (example: AAPL)" },
+  { href: "/instrument", label: "Instrument Search" },
   { href: "/sector-map", label: "Sector Map" },
   { href: "/rankings", label: "Industry Rankings" },
   { href: "/analyzer", label: "Stock Analyzer" },

@@ -67,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Trade",
     items: [
       { href: "/scanner", label: "Scanner", icon: ScanSearch },
+      { href: "/instrument", label: "Instrument Search", icon: Rocket },
       { href: "/custom-screener", label: "Custom Screener", icon: SlidersHorizontal },
       { href: "/screener-presets", label: "Preset Screeners", icon: Rocket },
       { href: "/stock-screener", label: "Stock Screener", icon: Search },
