@@ -62,6 +62,7 @@ def _refresh_loop():
     from src.notifications.dispatcher import dispatch_alerts
 
     _seen_signal_keys: set[str] = set()
+    _seen_date: str = ""  # reset accumulator daily
     _first_cycle = True
 
     while not _stop_event.is_set():
@@ -106,8 +107,15 @@ def _refresh_loop():
                 key = f"{s.symbol}:{s.action.value}:{s.entry:.2f}"
                 current_keys.add(key)
 
+            # Reset accumulated keys at midnight so signals can re-fire the next day
+            from datetime import datetime
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if today_str != _seen_date:
+                _seen_signal_keys = set()
+                _seen_date = today_str
+                _first_cycle = True
+
             if _first_cycle:
-                # On first cycle, send all signals as alerts (nothing to compare against)
                 new_signals = all_signals
                 _first_cycle = False
                 logger.info("First cycle: treating all %d signals as new", len(new_signals))
@@ -140,7 +148,7 @@ def _refresh_loop():
             else:
                 logger.info("No new signals to dispatch")
 
-            _seen_signal_keys = current_keys
+            _seen_signal_keys.update(current_keys)  # accumulate, don't replace
 
             # --- Watchlist alerts: check if any watched symbol has new signals ---
             try:

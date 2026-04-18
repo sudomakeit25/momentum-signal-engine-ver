@@ -1092,14 +1092,37 @@ type IndSeries = {
     bb_upper: number | null;
     bb_lower: number | null;
     bb_pct: number | null;
+    dpo_20: number | null;
+    dpo_50: number | null;
+    stoch_k: number | null;
+    stoch_d: number | null;
+    williams_r: number | null;
+    roc_10: number | null;
+    roc_21: number | null;
+    roc_63: number | null;
   };
   series: {
     date: string; close: number;
     rsi: number | null; macd: number | null;
     macd_signal: number | null; macd_hist: number | null;
     bb_upper: number | null; bb_lower: number | null;
+    dpo_20: number | null;
+    stoch_k: number | null; stoch_d: number | null;
+    williams_r: number | null;
+    roc_21: number | null;
   }[];
   verdict: string;
+  mood: { score: number | null; label: string };
+};
+
+const MOOD_COLORS: Record<string, string> = {
+  extreme_greed: "bg-red-500/30 text-red-200 border-red-500/50",
+  greed: "bg-orange-500/20 text-orange-200 border-orange-500/40",
+  bullish: "bg-emerald-500/20 text-emerald-200 border-emerald-500/40",
+  neutral: "bg-zinc-700/40 text-zinc-200 border-zinc-500/40",
+  bearish: "bg-sky-500/20 text-sky-200 border-sky-500/40",
+  fear: "bg-indigo-500/20 text-indigo-200 border-indigo-500/40",
+  extreme_fear: "bg-purple-500/30 text-purple-200 border-purple-500/50",
 };
 
 const VERDICT_CLASS: Record<string, string> = {
@@ -1118,34 +1141,15 @@ function IndicatorsTab({ symbol }: { symbol: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">RSI (14)</div>
-          <div className="mt-1 font-mono text-lg">
-            {d.snapshot.rsi !== null ? d.snapshot.rsi.toFixed(1) : "-"}
-          </div>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">MACD Hist</div>
-          <div
-            className={cn(
-              "mt-1 font-mono text-lg",
-              d.snapshot.macd_hist !== null && d.snapshot.macd_hist >= 0
-                ? "text-emerald-400"
-                : "text-red-400"
-            )}
-          >
-            {d.snapshot.macd_hist !== null ? d.snapshot.macd_hist.toFixed(3) : "-"}
-          </div>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">BB Position</div>
-          <div className="mt-1 font-mono text-lg">
-            {d.snapshot.bb_pct !== null
-              ? `${(d.snapshot.bb_pct * 100).toFixed(0)}%`
-              : "-"}
-          </div>
-        </div>
+      {/* Market Mood Meter */}
+      <MoodMeter score={d.mood?.score ?? null} label={d.mood?.label ?? "neutral"} />
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+        <StatTile label="RSI (14)" value={d.snapshot.rsi} fmt="fixed1" />
+        <StatTile label="Stoch %K" value={d.snapshot.stoch_k} fmt="fixed1" />
+        <StatTile label="Williams %R" value={d.snapshot.williams_r} fmt="fixed1" />
+        <StatTile label="DPO (20)" value={d.snapshot.dpo_20} fmt="fixed2" />
+        <StatTile label="Speed 21d" value={d.snapshot.roc_21} fmt="pct" />
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
           <div className="text-[10px] uppercase text-zinc-500">Verdict</div>
           <div className={cn("mt-1 text-lg font-semibold uppercase", VERDICT_CLASS[d.verdict])}>
@@ -1200,6 +1204,149 @@ function IndicatorsTab({ symbol }: { symbol: string }) {
             <Line type="monotone" dataKey="close" stroke="#06b6d4" dot={false} strokeWidth={1.5} />
           </ComposedChart>
         </ResponsiveContainer>
+      </div>
+
+      {/* Stochastic */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+          Stochastic Oscillator (14, 3)
+        </div>
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} domain={[0, 100]} />
+            <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+            <ReferenceLine y={80} stroke="#f87171" strokeDasharray="3 3" />
+            <ReferenceLine y={20} stroke="#34d399" strokeDasharray="3 3" />
+            <Line type="monotone" dataKey="stoch_k" stroke="#60a5fa" dot={false} strokeWidth={1.5} />
+            <Line type="monotone" dataKey="stoch_d" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
+          </LineChart>
+        </ResponsiveContainer>
+        <div className="mt-1 flex gap-3 text-[10px] text-zinc-400">
+          <LegendDot color="#60a5fa" label="%K" />
+          <LegendDot color="#f59e0b" label="%D (signal)" />
+        </div>
+      </div>
+
+      {/* DPO */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+          Detrended Price Oscillator (20)
+        </div>
+        <ResponsiveContainer width="100%" height={180}>
+          <ComposedChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} />
+            <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+            <ReferenceLine y={0} stroke="#52525b" />
+            <Bar dataKey="dpo_20" fill="#a78bfa55" />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <p className="mt-1 text-[10px] text-zinc-500">
+          Positive bars = price above its trend; negative = below. Use for cycle timing.
+        </p>
+      </div>
+
+      {/* Speed (ROC) */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+        <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+          Speed (Rate of Change, 21d)
+        </div>
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={d.series} margin={{ top: 5, right: 16, left: 8, bottom: 4 }}>
+            <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+            <XAxis dataKey="date" stroke="#71717a" fontSize={10} tick={false} />
+            <YAxis stroke="#71717a" fontSize={11} tickFormatter={(v) => `${v}%`} />
+            <Tooltip
+              contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
+              formatter={(v) => `${Number(v).toFixed(2)}%`}
+            />
+            <ReferenceLine y={0} stroke="#52525b" />
+            <Line type="monotone" dataKey="roc_21" stroke="#34d399" dot={false} strokeWidth={1.5} />
+          </LineChart>
+        </ResponsiveContainer>
+        <div className="mt-1 grid grid-cols-3 gap-2 text-center text-xs">
+          <SpeedTile label="10d" value={d.snapshot.roc_10} />
+          <SpeedTile label="21d" value={d.snapshot.roc_21} />
+          <SpeedTile label="63d" value={d.snapshot.roc_63} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoodMeter({ score, label }: { score: number | null; label: string }) {
+  const cls = MOOD_COLORS[label] ?? MOOD_COLORS.neutral;
+  const pct = score !== null ? Math.max(0, Math.min(100, score)) : 50;
+  return (
+    <div className={cn("rounded-lg border p-4", cls)}>
+      <div className="mb-1 flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wider opacity-80">Market Mood Meter</div>
+        <div className="text-xs uppercase opacity-90">
+          {label.replace(/_/g, " ")}
+        </div>
+      </div>
+      <div className="flex items-baseline gap-3">
+        <div className="font-mono text-3xl font-bold">
+          {score !== null ? score.toFixed(1) : "--"}
+        </div>
+        <div className="text-xs opacity-80">/ 100</div>
+      </div>
+      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-900/60">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-emerald-400 to-red-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="mt-2 text-[10px] opacity-80">
+        Composite of RSI, Stochastic, Williams %R, Bollinger position, 10d
+        momentum, MACD histogram (normalized). 80+ = extreme greed, below 20 =
+        extreme fear.
+      </p>
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  fmt,
+}: {
+  label: string;
+  value: number | null;
+  fmt: "fixed1" | "fixed2" | "pct";
+}) {
+  let display = "-";
+  let color = "";
+  if (value !== null && value !== undefined) {
+    if (fmt === "fixed1") display = value.toFixed(1);
+    else if (fmt === "fixed2") display = value.toFixed(2);
+    else if (fmt === "pct") {
+      display = `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+      color = value >= 0 ? "text-emerald-400" : "text-red-400";
+    }
+  }
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+      <div className="text-[10px] uppercase text-zinc-500">{label}</div>
+      <div className={cn("mt-1 font-mono text-lg", color)}>{display}</div>
+    </div>
+  );
+}
+
+function SpeedTile({ label, value }: { label: string; value: number | null }) {
+  if (value === null || value === undefined) return null;
+  const positive = value >= 0;
+  return (
+    <div className={cn(
+      "rounded border p-1",
+      positive ? "border-emerald-500/30 bg-emerald-500/10" : "border-red-500/30 bg-red-500/10"
+    )}>
+      <div className="text-[10px] uppercase opacity-70">{label}</div>
+      <div className={cn("font-mono text-sm", positive ? "text-emerald-300" : "text-red-300")}>
+        {positive ? "+" : ""}{value.toFixed(1)}%
       </div>
     </div>
   );

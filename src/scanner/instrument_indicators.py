@@ -8,10 +8,40 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
+import pandas as pd
+
 from src.data import client
 from src.signals.indicators import ema, macd, rsi, sma
 
 logger = logging.getLogger("mse.instrument_indicators")
+
+
+def _dpo(close: pd.Series, period: int = 20) -> pd.Series:
+    """Detrended Price Oscillator: close[n/2+1 ago] - SMA(close, n)."""
+    shift = period // 2 + 1
+    return close.shift(shift) - sma(close, period)
+
+
+def _stochastic(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[pd.Series, pd.Series]:
+    """Stochastic %K and %D."""
+    lowest = low.rolling(period).min()
+    highest = high.rolling(period).max()
+    k = 100 * (close - lowest) / (highest - lowest)
+    d = k.rolling(3).mean()
+    return k, d
+
+
+def _williams_r(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Williams %R: -100 * (highest - close) / (highest - lowest)."""
+    highest = high.rolling(period).max()
+    lowest = low.rolling(period).min()
+    return -100 * (highest - close) / (highest - lowest)
+
+
+def _roc(close: pd.Series, period: int) -> pd.Series:
+    """Rate of Change: (close / close[n ago] - 1) * 100."""
+    return (close / close.shift(period) - 1) * 100
 
 
 def get_indicator_series(symbol: str, days: int = 260) -> dict:
@@ -25,6 +55,8 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
         return {"symbol": symbol, "error": "insufficient history"}
 
     close = df["close"].astype(float)
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
 
     rsi_s = rsi(close).dropna()
     macd_line, macd_sig, macd_hist = macd(close)
@@ -33,6 +65,13 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
     bb_upper = sma20 + 2 * std20
     bb_lower = sma20 - 2 * std20
     bb_pct = (close - bb_lower) / (bb_upper - bb_lower)
+    dpo20 = _dpo(close, 20)
+    dpo50 = _dpo(close, 50)
+    stoch_k, stoch_d = _stochastic(high, low, close, 14)
+    wr = _williams_r(high, low, close, 14)
+    roc_10 = _roc(close, 10)
+    roc_21 = _roc(close, 21)
+    roc_63 = _roc(close, 63)
 
     # Latest snapshots
     def _last(series):
@@ -48,7 +87,59 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
         "bb_upper": round(_last(bb_upper), 2) if _last(bb_upper) is not None else None,
         "bb_lower": round(_last(bb_lower), 2) if _last(bb_lower) is not None else None,
         "bb_pct": round(_last(bb_pct), 3) if _last(bb_pct) is not None else None,
+        "dpo_20": _safe_round(dpo20.iloc[-1] if len(dpo20) else None, 2),
+        "dpo_50": _safe_round(dpo50.iloc[-1] if len(dpo50) else None, 2),
+        "stoch_k": _safe_round(stoch_k.iloc[-1] if len(stoch_k) else None, 2),
+        "stoch_d": _safe_round(stoch_d.iloc[-1] if len(stoch_d) else None, 2),
+        "williams_r": _safe_round(wr.iloc[-1] if len(wr) else None, 2),
+        "roc_10": _safe_round(roc_10.iloc[-1] if len(roc_10) else None, 2),
+        "roc_21": _safe_round(roc_21.iloc[-1] if len(roc_21) else None, 2),
+        "roc_63": _safe_round(roc_63.iloc[-1] if len(roc_63) else None, 2),
     }
+
+    # Market Mood Meter: composite 0-100 where 50 is neutral.
+    # Inputs normalized to a common scale:
+    #   RSI -> already 0-100
+    #   Stochastic %K -> already 0-100
+    #   Williams %R -> mapped from [-100, 0] to [0, 100]
+    #   BB position -> clipped 0-100
+    #   Momentum (10d ROC) -> mapped with a sigmoid-ish: clip [-10, +10] -> [0, 100]
+    #   MACD hist relative to its own 3-month std -> clip [-2, +2] -> [0, 100]
+    pieces: list[float] = []
+    if snapshot["rsi"] is not None:
+        pieces.append(snapshot["rsi"])
+    if snapshot["stoch_k"] is not None:
+        pieces.append(snapshot["stoch_k"])
+    if snapshot["williams_r"] is not None:
+        pieces.append(100 + snapshot["williams_r"])  # maps -100..0 -> 0..100
+    if snapshot["bb_pct"] is not None:
+        pieces.append(max(0.0, min(100.0, snapshot["bb_pct"] * 100)))
+    if snapshot["roc_10"] is not None:
+        clipped = max(-10.0, min(10.0, snapshot["roc_10"]))
+        pieces.append(50 + clipped * 5)
+    if _last(macd_hist) is not None:
+        hist_std = float(macd_hist.tail(63).std()) or 1.0
+        hist_norm = max(-2.0, min(2.0, snapshot["macd_hist"] / hist_std if hist_std else 0.0))
+        pieces.append(50 + hist_norm * 25)
+
+    mood_score: float | None = None
+    mood_label = "neutral"
+    if pieces:
+        mood_score = round(float(np.mean(pieces)), 1)
+        if mood_score >= 80:
+            mood_label = "extreme_greed"
+        elif mood_score >= 65:
+            mood_label = "greed"
+        elif mood_score >= 55:
+            mood_label = "bullish"
+        elif mood_score >= 45:
+            mood_label = "neutral"
+        elif mood_score >= 35:
+            mood_label = "bearish"
+        elif mood_score >= 20:
+            mood_label = "fear"
+        else:
+            mood_label = "extreme_fear"
 
     # Time series (last ~120 bars, enough for chart but not huge payload)
     tail_bars = 120
@@ -65,6 +156,11 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
             "macd_hist": _safe_round(macd_hist.get(idx), 4),
             "bb_upper": _safe_round(bb_upper.get(idx), 2),
             "bb_lower": _safe_round(bb_lower.get(idx), 2),
+            "dpo_20": _safe_round(dpo20.get(idx), 2),
+            "stoch_k": _safe_round(stoch_k.get(idx), 2),
+            "stoch_d": _safe_round(stoch_d.get(idx), 2),
+            "williams_r": _safe_round(wr.get(idx), 2),
+            "roc_21": _safe_round(roc_21.get(idx), 2),
         })
 
     verdict = _rsi_verdict(snapshot["rsi"])
@@ -74,6 +170,10 @@ def get_indicator_series(symbol: str, days: int = 260) -> dict:
         "snapshot": snapshot,
         "series": series,
         "verdict": verdict,
+        "mood": {
+            "score": mood_score,
+            "label": mood_label,
+        },
     }
 
 
