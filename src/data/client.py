@@ -32,6 +32,20 @@ def _is_crypto(symbol: str) -> bool:
     return "/" in symbol
 
 
+# Known international exchange suffixes FMP covers. Anything in this set
+# routes to FMP historical-prices instead of Alpaca.
+_INTL_SUFFIXES: set[str] = {
+    "PA", "DE", "L", "TO", "V", "SW", "TA", "HK", "AS", "BR", "MI",
+    "SS", "SZ", "KS", "T", "TW", "AX", "MC", "VI", "WA", "SA", "OL",
+    "HE", "CO", "ST", "MX", "BO", "NS", "TWO", "JK",
+}
+
+
+def _is_international(symbol: str) -> bool:
+    parts = symbol.split(".")
+    return len(parts) == 2 and parts[1].upper() in _INTL_SUFFIXES
+
+
 def _get_trading_client() -> TradingClient:
     return TradingClient(
         settings.alpaca_api_key,
@@ -50,6 +64,15 @@ def get_bars(
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
+
+    # International tickers route through FMP historical prices.
+    # (TimeFrame doesn't implement __eq__ reliably; compare its string form.)
+    if _is_international(symbol) and str(timeframe) == "1Day":
+        from src.data import fmp_client
+        bars = fmp_client.get_historical_prices(symbol, days)
+        if not bars.empty:
+            _cache.set(cache_key, bars)
+        return bars
 
     start = datetime.now() - timedelta(days=days)
     if _is_crypto(symbol):
@@ -92,8 +115,18 @@ def get_multi_bars(
     start = datetime.now() - timedelta(days=days)
     result: dict[str, pd.DataFrame] = {}
 
-    stock_symbols = [s for s in symbols if not _is_crypto(s)]
+    stock_symbols = [s for s in symbols if not _is_crypto(s) and not _is_international(s)]
     crypto_symbols = [s for s in symbols if _is_crypto(s)]
+    intl_symbols = [s for s in symbols if _is_international(s)]
+
+    if intl_symbols and str(timeframe) == "1Day":
+        from src.data import fmp_client
+        def _intl_fetch(sym: str) -> tuple[str, pd.DataFrame]:
+            return sym, fmp_client.get_historical_prices(sym, days)
+        with ThreadPoolExecutor(max_workers=min(8, len(intl_symbols))) as pool:
+            for sym, df in pool.map(_intl_fetch, intl_symbols):
+                if not df.empty:
+                    result[sym] = df
 
     def _parse_barset(df: pd.DataFrame, syms: list[str]) -> None:
         if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:

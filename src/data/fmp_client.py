@@ -295,3 +295,44 @@ def get_quote(symbol: str) -> dict:
     if isinstance(data, list) and data:
         return data[0]
     return {}
+
+
+def get_historical_prices(symbol: str, days: int = 260):
+    """Fetch daily OHLCV for any ticker FMP covers — returns a pandas DataFrame
+    matching the shape Alpaca client produces (index=date, columns open/high/
+    low/close/volume). Used as the fallback price source for international
+    tickers Alpaca does not cover.
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    cache_key = f"fmp_hist_{symbol}_{days}"
+    data = _get(
+        f"/historical-price-full/{symbol}",
+        params={
+            "from": (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d"),
+            "to": datetime.utcnow().strftime("%Y-%m-%d"),
+        },
+        cache_key=cache_key,
+        cache_ttl=60 * 60,
+    )
+    if not data or not isinstance(data, dict):
+        return pd.DataFrame()
+    rows = data.get("historical") or []
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame([
+        {
+            "open": float(r.get("open", 0) or 0),
+            "high": float(r.get("high", 0) or 0),
+            "low": float(r.get("low", 0) or 0),
+            "close": float(r.get("close", 0) or 0),
+            "volume": int(r.get("volume", 0) or 0),
+            "_date": r.get("date"),
+        }
+        for r in rows
+    ])
+    df.index = pd.to_datetime(df["_date"])
+    df = df.drop(columns=["_date"]).sort_index()
+    return df
