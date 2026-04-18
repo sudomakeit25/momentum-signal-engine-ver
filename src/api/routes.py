@@ -2746,6 +2746,21 @@ def rankings_industry(industry_slug: str, limit: int = Query(default=30, ge=5, l
     return get_industry_ranking(industry_slug, limit=limit)
 
 
+from src.scanner.cot import get_cot, list_contracts as cot_contracts
+
+
+@router.get("/cot/contracts")
+def cot_list():
+    """Available COT contract codes + labels."""
+    return cot_contracts()
+
+
+@router.get("/cot/{contract_key}")
+def cot_contract(contract_key: str, years: int = Query(default=3, ge=1, le=10)):
+    """Weekly COT time series + snapshot for a futures contract."""
+    return get_cot(contract_key, years=years)
+
+
 @router.get("/sector-map")
 def sector_map(days: int = Query(default=365, ge=90, le=1825)):
     """Sector ETF cumulative-return time series (for sector-rotation chart)."""

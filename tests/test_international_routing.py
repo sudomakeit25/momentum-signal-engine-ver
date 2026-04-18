@@ -6,6 +6,15 @@ import pytest
 from src.data import client
 
 
+class TestFMPRouting:
+    """Broader than just international — forex, commodities, indices all route to FMP too."""
+    def test_forex(self): assert client._use_fmp_historical("EURUSD")
+    def test_index(self): assert client._use_fmp_historical("^GSPC")
+    def test_commodity(self): assert client._use_fmp_historical("GCUSD")
+    def test_us_stock_does_not(self): assert not client._use_fmp_historical("AAPL")
+    def test_crypto_does_not(self): assert not client._use_fmp_historical("BTC/USD")
+
+
 class TestIsInternational:
     def test_us_ticker(self):
         assert client._is_international("AAPL") is False

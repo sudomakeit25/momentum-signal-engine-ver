@@ -102,6 +102,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/sector-flow", label: "Sector Flow", icon: TrendingUp },
       { href: "/sector-map", label: "Sector Map", icon: Activity },
       { href: "/rankings", label: "Industry Rankings", icon: ListOrdered },
+      { href: "/cot", label: "COT Reports", icon: BarChart3 },
       { href: "/correlations", label: "Correlations", icon: GitCompareArrows },
       { href: "/options-builder", label: "Options Builder", icon: Wrench },
       { href: "/heatmap", label: "Heatmap", icon: LayoutGrid },

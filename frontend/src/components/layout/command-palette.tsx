@@ -32,6 +32,7 @@ const PAGES = [
   { href: "/instrument", label: "Instrument Search" },
   { href: "/sector-map", label: "Sector Map" },
   { href: "/rankings", label: "Industry Rankings" },
+  { href: "/cot", label: "COT Reports" },
   { href: "/analyzer", label: "Stock Analyzer" },
   { href: "/trends", label: "Multi-Year Trends" },
 ];

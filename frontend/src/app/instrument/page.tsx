@@ -11,6 +11,11 @@ const POPULAR = [
   "LLY", "UNH", "JPM", "V", "BAC", "XOM", "COST",
 ];
 
+const FOREX = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD"];
+const COMMODITIES = ["GCUSD", "SIUSD", "CLUSD", "NGUSD", "HGUSD", "ZCUSD"];
+const INDICES = ["^GSPC", "^DJI", "^IXIC", "^VIX"];
+const INTERNATIONAL = ["AIR.PA", "RHM.DE", "BA.L", "ASML", "HO.PA", "R3NK.DE"];
+
 const RECENT_KEY = "mse-recent-instruments";
 
 function loadRecents(): string[] {
@@ -99,27 +104,45 @@ export default function InstrumentSearchPage() {
         </div>
       )}
 
-      <div>
-        <div className="mb-2 text-[10px] font-semibold uppercase text-zinc-500">
-          Popular
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {POPULAR.map((sym) => (
-            <Link
-              key={sym}
-              href={`/instrument/${sym}`}
-              onClick={() => saveRecent(sym)}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs font-mono text-zinc-300 hover:border-cyan-500/60 hover:text-cyan-300"
-            >
-              {sym}
-            </Link>
-          ))}
-        </div>
-      </div>
+      <CategoryGrid title="Popular stocks" syms={POPULAR} onSelect={saveRecent} />
+      <CategoryGrid title="Forex" syms={FOREX} onSelect={saveRecent} />
+      <CategoryGrid title="Commodities" syms={COMMODITIES} onSelect={saveRecent} />
+      <CategoryGrid title="Indices" syms={INDICES} onSelect={saveRecent} />
+      <CategoryGrid title="International" syms={INTERNATIONAL} onSelect={saveRecent} />
 
       <p className="text-[10px] text-zinc-500">
         Tip: Cmd-K / Ctrl-K from anywhere opens a quick ticker search.
       </p>
+    </div>
+  );
+}
+
+function CategoryGrid({
+  title,
+  syms,
+  onSelect,
+}: {
+  title: string;
+  syms: string[];
+  onSelect: (sym: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 text-[10px] font-semibold uppercase text-zinc-500">
+        {title}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {syms.map((sym) => (
+          <Link
+            key={sym}
+            href={`/instrument/${encodeURIComponent(sym)}`}
+            onClick={() => onSelect(sym)}
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs font-mono text-zinc-300 hover:border-cyan-500/60 hover:text-cyan-300"
+          >
+            {sym}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

@@ -258,6 +258,23 @@ export function useIndustryRanking(slug: string) {
   });
 }
 
+export function useCotContracts() {
+  return useQuery({
+    queryKey: ["cot-contracts"],
+    queryFn: () => apiFetch<{ key: string; label: string }[]>("/cot/contracts"),
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+export function useCotContract(key: string) {
+  return useQuery({
+    queryKey: ["cot", key],
+    queryFn: () => apiFetch<Record<string, unknown>>(`/cot/${key}`),
+    enabled: !!key,
+    staleTime: 12 * 60 * 60 * 1000,
+  });
+}
+
 export function useSectorMap(days = 365) {
   return useQuery({
     queryKey: ["sector-map", days],

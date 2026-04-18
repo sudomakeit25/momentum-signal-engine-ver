@@ -47,6 +47,46 @@ def _is_international(symbol: str) -> bool:
     return len(parts) == 2 and parts[1].upper() in _INTL_SUFFIXES
 
 
+# Forex majors / minors / some crosses (FMP format — no separator).
+_FOREX_PAIRS: set[str] = {
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
+    "EURJPY", "GBPJPY", "EURGBP", "EURCHF", "EURAUD", "EURCAD", "GBPCHF",
+    "CHFJPY", "AUDJPY", "CADJPY", "NZDJPY", "AUDNZD", "GBPAUD", "GBPCAD",
+}
+
+# Common commodity codes used by FMP (typically ending in USD).
+_COMMODITY_CODES: set[str] = {
+    "GCUSD", "SIUSD", "PLUSD", "PAUSD",     # gold, silver, platinum, palladium
+    "CLUSD", "BZUSD", "NGUSD", "HOUSD",     # WTI, brent, nat gas, heating oil
+    "HGUSD", "ALIUSD",                       # copper, aluminum
+    "ZCUSD", "ZSUSD", "ZWUSD", "ZLUSD",     # corn, soybeans, wheat, soybean oil
+    "KCUSD", "CCUSD", "SBUSD", "CTUSD",     # coffee, cocoa, sugar, cotton
+    "LEUSD", "HEUSD",                        # live cattle, lean hogs
+}
+
+
+def _is_forex(symbol: str) -> bool:
+    return symbol.upper() in _FOREX_PAIRS
+
+
+def _is_commodity(symbol: str) -> bool:
+    return symbol.upper() in _COMMODITY_CODES
+
+
+def _is_index(symbol: str) -> bool:
+    return symbol.startswith("^")
+
+
+def _use_fmp_historical(symbol: str) -> bool:
+    """Symbols Alpaca doesn't cover — route through FMP historical prices."""
+    return (
+        _is_international(symbol)
+        or _is_forex(symbol)
+        or _is_commodity(symbol)
+        or _is_index(symbol)
+    )
+
+
 def _get_trading_client() -> TradingClient:
     return TradingClient(
         settings.alpaca_api_key,
@@ -66,9 +106,9 @@ def get_bars(
     if cached is not None:
         return cached
 
-    # International tickers route through FMP historical prices.
-    # (TimeFrame doesn't implement __eq__ reliably; compare its string form.)
-    if _is_international(symbol) and str(timeframe) == "1Day":
+    # International, forex, commodity, and index tickers route through FMP
+    # historical prices — Alpaca doesn't cover these.
+    if _use_fmp_historical(symbol) and str(timeframe) == "1Day":
         from src.data import fmp_client
         bars = fmp_client.get_historical_prices(symbol, days)
         if not bars.empty:
@@ -117,16 +157,19 @@ def get_multi_bars(
     start = datetime.now() - timedelta(days=days)
     result: dict[str, pd.DataFrame] = {}
 
-    stock_symbols = [s for s in symbols if not _is_crypto(s) and not _is_international(s)]
+    stock_symbols = [
+        s for s in symbols
+        if not _is_crypto(s) and not _use_fmp_historical(s)
+    ]
     crypto_symbols = [s for s in symbols if _is_crypto(s)]
-    intl_symbols = [s for s in symbols if _is_international(s)]
+    fmp_symbols = [s for s in symbols if _use_fmp_historical(s)]
 
-    if intl_symbols and str(timeframe) == "1Day":
+    if fmp_symbols and str(timeframe) == "1Day":
         from src.data import fmp_client
-        def _intl_fetch(sym: str) -> tuple[str, pd.DataFrame]:
+        def _fmp_fetch(sym: str) -> tuple[str, pd.DataFrame]:
             return sym, fmp_client.get_historical_prices(sym, days)
-        with ThreadPoolExecutor(max_workers=min(8, len(intl_symbols))) as pool:
-            for sym, df in pool.map(_intl_fetch, intl_symbols):
+        with ThreadPoolExecutor(max_workers=min(8, len(fmp_symbols))) as pool:
+            for sym, df in pool.map(_fmp_fetch, fmp_symbols):
                 if not df.empty:
                     result[sym] = df
 
