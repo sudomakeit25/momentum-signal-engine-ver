@@ -54,6 +54,45 @@ class TestZVerdict:
         assert ifund._z_verdict(None) == "n/a"
 
 
+class TestPiotroskiF:
+    def test_strong_company_scores_high(self):
+        cur_i = {"netIncome": 100, "revenue": 1000, "grossProfit": 400, "weightedAverageShsOut": 100}
+        prev_i = {"netIncome": 50, "revenue": 800, "grossProfit": 280, "weightedAverageShsOut": 105}
+        cur_b = {"totalAssets": 2000, "totalCurrentAssets": 800, "totalCurrentLiabilities": 300, "longTermDebt": 100}
+        prev_b = {"totalAssets": 1800, "totalCurrentAssets": 700, "totalCurrentLiabilities": 400, "longTermDebt": 200}
+        cur_cf = {"operatingCashFlow": 150}
+        f = ifund._piotroski_f_score(cur_i, prev_i, cur_b, prev_b, cur_cf)
+        assert f is not None and f >= 7
+
+    def test_weak_company_scores_low(self):
+        cur_i = {"netIncome": -100, "revenue": 800, "grossProfit": 200, "weightedAverageShsOut": 120}
+        prev_i = {"netIncome": 50, "revenue": 1000, "grossProfit": 400, "weightedAverageShsOut": 100}
+        cur_b = {"totalAssets": 1800, "totalCurrentAssets": 500, "totalCurrentLiabilities": 500, "longTermDebt": 300}
+        prev_b = {"totalAssets": 2000, "totalCurrentAssets": 700, "totalCurrentLiabilities": 300, "longTermDebt": 200}
+        cur_cf = {"operatingCashFlow": -50}
+        f = ifund._piotroski_f_score(cur_i, prev_i, cur_b, prev_b, cur_cf)
+        assert f is not None and f <= 3
+
+    def test_zero_assets_returns_none(self):
+        assert ifund._piotroski_f_score(
+            {"netIncome": 100, "revenue": 100}, {"netIncome": 50, "revenue": 100},
+            {"totalAssets": 0}, {"totalAssets": 100}, {"operatingCashFlow": 10},
+        ) is None
+
+
+class TestFVerdict:
+    def test_strong(self): assert ifund._f_verdict(8) == "strong"
+    def test_average(self): assert ifund._f_verdict(5) == "average"
+    def test_weak(self): assert ifund._f_verdict(2) == "weak"
+    def test_none(self): assert ifund._f_verdict(None) == "n/a"
+
+
+class TestMVerdict:
+    def test_clean(self): assert ifund._m_verdict(-2.0) == "clean"
+    def test_flagged(self): assert ifund._m_verdict(-1.0) == "flagged"
+    def test_none(self): assert ifund._m_verdict(None) == "n/a"
+
+
 class TestEmptyFallback:
     def test_no_fmp_returns_structured_empty(self, monkeypatch):
         """When FMP is unavailable, get_fundamentals returns a full shape with empty values."""

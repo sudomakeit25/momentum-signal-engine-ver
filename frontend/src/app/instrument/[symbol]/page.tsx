@@ -25,6 +25,7 @@ const TABS = [
   "Pattern",
   "Overbought - Oversold",
   "Fundamentals",
+  "Financials",
   "News",
 ] as const;
 
@@ -76,12 +77,30 @@ type Altman = {
   verdict: string;
 };
 
+type WeightedRow = {
+  year: string;
+  sales_per_share: number;
+  net_income_per_share: number;
+  fcf_per_share: number;
+  gross_profit_per_share: number;
+};
+
+type Statements = {
+  income: { year: string; revenue: number; gross_profit: number; operating_income: number; net_income: number; eps: number }[];
+  balance_sheet: { year: string; total_assets: number; total_liabilities: number; total_equity: number; cash: number; long_term_debt: number }[];
+  cash_flow: { year: string; operating_cash_flow: number; capex: number; free_cash_flow: number; financing_cash_flow: number }[];
+};
+
 type Fundamentals = {
   header: Header;
   income_series: IncomeRow[];
   shares_series: SharesRow[];
+  weighted_financials: WeightedRow[];
   fair_value: FairValue;
   altman_z: Altman;
+  piotroski_f: { score: number | null; verdict: string };
+  beneish_m: { score: number | null; verdict: string };
+  statements: Statements;
   has_fundamentals: boolean;
 };
 
@@ -201,6 +220,9 @@ export default function InstrumentPage({
       {tab === "Seasonality" && <SeasonalityTab symbol={symbol} />}
       {tab === "Pattern" && <PatternTab symbol={symbol} />}
       {tab === "Overbought - Oversold" && <IndicatorsTab symbol={symbol} />}
+      {tab === "Financials" && (
+        <FinancialsTab fundamentals={fundamentals as Fundamentals | undefined} />
+      )}
       {tab === "News" && <NewsTab symbol={symbol} />}
     </div>
   );
@@ -550,6 +572,78 @@ function FundamentalsTab({
           </div>
         </div>
       )}
+
+      {/* Piotroski F + Beneish M */}
+      {(fundamentals.piotroski_f.score !== null || fundamentals.beneish_m.score !== null) && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SolidityCard
+            title="Piotroski F-Score"
+            latest={fundamentals.piotroski_f.score !== null ? fundamentals.piotroski_f.score.toString() : "--"}
+            verdict={fundamentals.piotroski_f.verdict}
+            description={
+              fundamentals.piotroski_f.verdict === "strong"
+                ? "Strong fundamentals (7-9). High-quality company."
+                : fundamentals.piotroski_f.verdict === "average"
+                ? "Average fundamentals (4-6)."
+                : fundamentals.piotroski_f.verdict === "weak"
+                ? "Weak fundamentals (0-3). Red flags."
+                : "No data."
+            }
+          />
+          <SolidityCard
+            title="Beneish M-Score"
+            latest={
+              fundamentals.beneish_m.score !== null
+                ? fundamentals.beneish_m.score.toFixed(2)
+                : "--"
+            }
+            verdict={fundamentals.beneish_m.verdict}
+            description={
+              fundamentals.beneish_m.verdict === "flagged"
+                ? "M > -1.78: possible earnings manipulation."
+                : fundamentals.beneish_m.verdict === "clean"
+                ? "M <= -1.78: no manipulation flags."
+                : "No data."
+            }
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SolidityCard({
+  title,
+  latest,
+  verdict,
+  description,
+}: {
+  title: string;
+  latest: string;
+  verdict: string;
+  description: string;
+}) {
+  const bg =
+    verdict === "strong" || verdict === "clean"
+      ? "border-emerald-500/30 bg-emerald-500/10"
+      : verdict === "average"
+      ? "border-amber-500/30 bg-amber-500/10"
+      : verdict === "weak" || verdict === "flagged"
+      ? "border-red-500/30 bg-red-500/10"
+      : "border-zinc-700 bg-zinc-900/50";
+  const color =
+    verdict === "strong" || verdict === "clean"
+      ? "text-emerald-400"
+      : verdict === "average"
+      ? "text-amber-400"
+      : verdict === "weak" || verdict === "flagged"
+      ? "text-red-400"
+      : "text-zinc-400";
+  return (
+    <div className={cn("rounded-lg border p-4", bg)}>
+      <div className="text-[10px] uppercase opacity-80">{title}</div>
+      <div className={cn("mt-1 text-3xl font-bold", color)}>{latest}</div>
+      <div className="mt-1 text-xs opacity-80">{description}</div>
     </div>
   );
 }
@@ -953,6 +1047,152 @@ function IndicatorsTab({ symbol }: { symbol: string }) {
             <Line type="monotone" dataKey="close" stroke="#06b6d4" dot={false} strokeWidth={1.5} />
           </ComposedChart>
         </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+/* --------------- Financial Statements tab --------------- */
+
+function FinancialsTab({ fundamentals }: { fundamentals: Fundamentals | undefined }) {
+  if (!fundamentals) return null;
+  const { statements, weighted_financials, has_fundamentals } = fundamentals;
+  if (!has_fundamentals) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        Financial statements require an FMP Starter plan or higher. Data will
+        populate automatically once the key is upgraded.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Weighted Financials per-share chart */}
+      {weighted_financials.length > 0 && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            Weighted Financials (per share)
+          </div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={weighted_financials} margin={{ top: 20, right: 16, left: 8, bottom: 4 }}>
+              <CartesianGrid stroke="#27272a" strokeDasharray="2 4" />
+              <XAxis dataKey="year" stroke="#71717a" fontSize={11} />
+              <YAxis stroke="#71717a" fontSize={11} />
+              <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+              <Bar dataKey="sales_per_share" fill="#f59e0b" name="Sales/Sh" />
+              <Bar dataKey="net_income_per_share" fill="#60a5fa" name="NI/Sh" />
+              <Bar dataKey="fcf_per_share" fill="#34d399" name="FCF/Sh" />
+              <Bar dataKey="gross_profit_per_share" fill="#a78bfa" name="GP/Sh" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-zinc-400">
+            <LegendDot color="#f59e0b" label="Sales / Share" />
+            <LegendDot color="#60a5fa" label="Net Income / Share" />
+            <LegendDot color="#34d399" label="Free Cash Flow / Share" />
+            <LegendDot color="#a78bfa" label="Gross Profit / Share" />
+          </div>
+        </div>
+      )}
+
+      {/* Income Statement */}
+      <StatementTable
+        title="Income Statement"
+        rows={statements.income}
+        columns={[
+          { key: "revenue", label: "Revenue" },
+          { key: "gross_profit", label: "Gross Profit" },
+          { key: "operating_income", label: "Operating Income" },
+          { key: "net_income", label: "Net Income" },
+          { key: "eps", label: "EPS", format: "plain" },
+        ]}
+      />
+
+      <StatementTable
+        title="Balance Sheet"
+        rows={statements.balance_sheet}
+        columns={[
+          { key: "total_assets", label: "Assets" },
+          { key: "total_liabilities", label: "Liabilities" },
+          { key: "total_equity", label: "Equity" },
+          { key: "cash", label: "Cash" },
+          { key: "long_term_debt", label: "LT Debt" },
+        ]}
+      />
+
+      <StatementTable
+        title="Cash Flow"
+        rows={statements.cash_flow}
+        columns={[
+          { key: "operating_cash_flow", label: "CFO" },
+          { key: "capex", label: "CapEx" },
+          { key: "free_cash_flow", label: "FCF" },
+          { key: "financing_cash_flow", label: "CFF" },
+        ]}
+      />
+    </div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+type ColDef = { key: string; label: string; format?: "plain" | "money" };
+
+function StatementTable({
+  title,
+  rows,
+  columns,
+}: {
+  title: string;
+  rows: Record<string, number | string>[];
+  columns: ColDef[];
+}) {
+  if (!rows.length) return null;
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+      <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">{title}</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="border-b border-zinc-800 text-left text-zinc-400">
+              <th className="px-2 py-1">Metric</th>
+              {rows.map((r) => (
+                <th key={String(r.year)} className="px-2 py-1 text-right">{String(r.year)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {columns.map((col) => (
+              <tr key={col.key} className="border-b border-zinc-800/50">
+                <td className="px-2 py-1 text-zinc-300">{col.label}</td>
+                {rows.map((r) => {
+                  const raw = r[col.key];
+                  const n = typeof raw === "number" ? raw : 0;
+                  const formatted =
+                    col.format === "plain" ? n.toFixed(2) : fmtMoney(n);
+                  return (
+                    <td
+                      key={String(r.year)}
+                      className={cn(
+                        "px-2 py-1 text-right",
+                        n < 0 ? "text-red-400" : "text-zinc-200"
+                      )}
+                    >
+                      {formatted}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
