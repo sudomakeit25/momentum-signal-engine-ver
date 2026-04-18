@@ -11,6 +11,9 @@ import {
   useInstrumentChart,
   useInstrumentNews,
   useMarketNews,
+  useInstrumentInsider,
+  useInstrumentEvents,
+  useTranscriptList,
 } from "@/hooks/use-trading";
 import { useWatchlist } from "@/hooks/use-watchlist";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +31,8 @@ const TABS = [
   "Overbought - Oversold",
   "Fundamentals",
   "Financials",
+  "Insider",
+  "Transcripts",
   "News",
 ] as const;
 
@@ -225,7 +230,135 @@ export default function InstrumentPage({
       {tab === "Financials" && (
         <FinancialsTab fundamentals={fundamentals as Fundamentals | undefined} />
       )}
+      {tab === "Insider" && <InsiderTab symbol={symbol} />}
+      {tab === "Transcripts" && <TranscriptsTab symbol={symbol} />}
       {tab === "News" && <NewsTab symbol={symbol} />}
+    </div>
+  );
+}
+
+/* --------------- Insider tab --------------- */
+
+type InsiderTrade = {
+  filing_date: string;
+  transaction_date: string;
+  reporter_name: string;
+  reporter_title: string;
+  transaction_type: string;
+  shares: number;
+  price: number;
+  value: number;
+  acquired_disposed: string;
+  link: string;
+};
+
+function InsiderTab({ symbol }: { symbol: string }) {
+  const { data, isLoading } = useInstrumentInsider(symbol);
+  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
+  const trades = ((data as { trades: InsiderTrade[] } | undefined)?.trades) ?? [];
+
+  if (trades.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        No insider transactions available. Requires FMP Starter plan for the
+        insider-trading endpoint — data will populate automatically once
+        configured.
+      </div>
+    );
+  }
+
+  // Aggregate buys vs sells over last 6 months
+  const now = Date.now();
+  const sixMonthsMs = 180 * 24 * 60 * 60 * 1000;
+  const recent = trades.filter((t) => {
+    const d = new Date(t.filing_date).getTime();
+    return d && now - d < sixMonthsMs;
+  });
+  const buyValue = recent
+    .filter((t) => (t.acquired_disposed || "").toUpperCase().startsWith("A"))
+    .reduce((a, b) => a + b.value, 0);
+  const sellValue = recent
+    .filter((t) => (t.acquired_disposed || "").toUpperCase().startsWith("D"))
+    .reduce((a, b) => a + b.value, 0);
+  const netValue = buyValue - sellValue;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+          <div className="text-[10px] uppercase text-emerald-300">Buys (6mo)</div>
+          <div className="mt-1 font-mono text-lg text-emerald-200">
+            {fmtMoney(buyValue)}
+          </div>
+        </div>
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+          <div className="text-[10px] uppercase text-red-300">Sells (6mo)</div>
+          <div className="mt-1 font-mono text-lg text-red-200">
+            {fmtMoney(sellValue)}
+          </div>
+        </div>
+        <div
+          className={cn(
+            "rounded-lg border p-3",
+            netValue >= 0
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-200",
+          )}
+        >
+          <div className="text-[10px] uppercase opacity-80">Net (6mo)</div>
+          <div className="mt-1 font-mono text-lg">
+            {netValue >= 0 ? "+" : ""}
+            {fmtMoney(netValue)}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-zinc-800">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-zinc-800 bg-zinc-900/50 text-left text-[10px] uppercase text-zinc-400">
+              <th className="px-3 py-2">Filed</th>
+              <th className="px-3 py-2">Reporter</th>
+              <th className="px-3 py-2">Title</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2 text-right">Shares</th>
+              <th className="px-3 py-2 text-right">Price</th>
+              <th className="px-3 py-2 text-right">Value</th>
+              <th className="px-3 py-2">A/D</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((t, i) => {
+              const isBuy = (t.acquired_disposed || "").toUpperCase().startsWith("A");
+              return (
+                <tr key={i} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                  <td className="px-3 py-1.5 font-mono text-zinc-400">
+                    {t.filing_date}
+                  </td>
+                  <td className="px-3 py-1.5 text-zinc-200">{t.reporter_name || "-"}</td>
+                  <td className="px-3 py-1.5 text-zinc-400">{t.reporter_title || "-"}</td>
+                  <td className="px-3 py-1.5 text-zinc-400">{t.transaction_type || "-"}</td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {t.shares ? t.shares.toLocaleString() : "-"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono text-zinc-300">
+                    {t.price ? `$${t.price.toFixed(2)}` : "-"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {t.value ? fmtMoney(t.value) : "-"}
+                  </td>
+                  <td className={cn(
+                    "px-3 py-1.5 font-semibold",
+                    isBuy ? "text-emerald-400" : "text-red-400",
+                  )}>
+                    {isBuy ? "Buy" : "Sell"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -292,7 +425,118 @@ function OverviewTab({
         />
       </div>
 
+      <EventsPanel symbol={header?.symbol ?? "-"} />
+
       <AgentPanel symbol={header?.symbol ?? "-"} />
+    </div>
+  );
+}
+
+/* --------------- Events panel --------------- */
+
+type EventsPayload = {
+  next_earnings: { date: string; eps_estimated: number | null; revenue_estimated: number | null } | null;
+  recent_earnings: {
+    date: string; eps: number | null; eps_estimated: number | null;
+    revenue: number | null; surprise_pct: number | null;
+  }[];
+  recent_dividends: {
+    date: string; dividend: number | null;
+    record_date: string | null; payment_date: string | null;
+  }[];
+  recent_splits: {
+    date: string; ratio: string | null;
+    numerator: number | null; denominator: number | null;
+  }[];
+};
+
+function EventsPanel({ symbol }: { symbol: string }) {
+  const { data } = useInstrumentEvents(symbol);
+  const d = data as EventsPayload | undefined;
+  if (!d) return null;
+  const hasAny =
+    d.next_earnings !== null ||
+    d.recent_earnings.length > 0 ||
+    d.recent_dividends.length > 0 ||
+    d.recent_splits.length > 0;
+  if (!hasAny) return null;
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-xs font-semibold uppercase text-zinc-400">Key Events</div>
+        {d.next_earnings && (
+          <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200">
+            Next earnings: {d.next_earnings.date}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div>
+          <div className="mb-1 text-[10px] uppercase text-zinc-500">Recent earnings</div>
+          {d.recent_earnings.length === 0 ? (
+            <div className="text-xs text-zinc-500">no data</div>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {d.recent_earnings.slice(0, 4).map((e) => (
+                <li key={e.date} className="flex items-center justify-between">
+                  <span className="font-mono text-zinc-400">{e.date}</span>
+                  <span>
+                    <span className="font-mono text-zinc-200">
+                      {e.eps !== null ? `$${e.eps.toFixed(2)}` : "-"}
+                    </span>
+                    {e.surprise_pct !== null && (
+                      <span className={cn(
+                        "ml-2 font-mono text-[10px]",
+                        e.surprise_pct >= 0 ? "text-emerald-400" : "text-red-400",
+                      )}>
+                        {e.surprise_pct >= 0 ? "+" : ""}{e.surprise_pct.toFixed(1)}%
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 text-[10px] uppercase text-zinc-500">Dividends</div>
+          {d.recent_dividends.length === 0 ? (
+            <div className="text-xs text-zinc-500">none</div>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {d.recent_dividends.slice(0, 4).map((x) => (
+                <li key={x.date} className="flex items-center justify-between">
+                  <span className="font-mono text-zinc-400">{x.date}</span>
+                  <span className="font-mono text-emerald-300">
+                    {x.dividend !== null ? `$${x.dividend.toFixed(3)}` : "-"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 text-[10px] uppercase text-zinc-500">Splits</div>
+          {d.recent_splits.length === 0 ? (
+            <div className="text-xs text-zinc-500">none in recent history</div>
+          ) : (
+            <ul className="space-y-1 text-xs">
+              {d.recent_splits.map((s) => (
+                <li key={s.date} className="flex items-center justify-between">
+                  <span className="font-mono text-zinc-400">{s.date}</span>
+                  <span className="font-mono text-zinc-200">
+                    {s.ratio ?? (s.numerator && s.denominator ? `${s.numerator}:${s.denominator}` : "-")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1638,6 +1882,120 @@ function StatementTable({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/* --------------- Transcripts tab --------------- */
+
+type TranscriptQuarter = { quarter: number; year: number; date: string };
+type TranscriptSummary = {
+  markdown?: string;
+  quarter?: number;
+  year?: number;
+  call_date?: string;
+  transcript_truncated?: boolean;
+  error?: string;
+  configure_hint?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+};
+
+function TranscriptsTab({ symbol }: { symbol: string }) {
+  const { data: listData, isLoading } = useTranscriptList(symbol);
+  const quarters =
+    ((listData as { quarters: TranscriptQuarter[] } | undefined)?.quarters) ?? [];
+  const [selected, setSelected] = useState<TranscriptQuarter | null>(null);
+  const [summary, setSummary] = useState<TranscriptSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function loadSummary(q: TranscriptQuarter) {
+    setSelected(q);
+    setSummary(null);
+    setLoading(true);
+    try {
+      const r = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/instrument/${symbol}/transcript/${q.year}/${q.quarter}`,
+      );
+      const json = (await r.json()) as TranscriptSummary;
+      setSummary(json);
+    } catch (e) {
+      setSummary({ error: (e as Error).message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (isLoading) return <Skeleton className="h-64 w-full bg-zinc-800" />;
+  if (quarters.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        No earnings-call transcripts available. Requires FMP Starter plan for
+        the transcript endpoint — data will populate automatically once
+        configured.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {quarters.map((q) => {
+          const active = selected && selected.year === q.year && selected.quarter === q.quarter;
+          return (
+            <button
+              key={`${q.year}-${q.quarter}`}
+              onClick={() => loadSummary(q)}
+              className={cn(
+                "rounded-md border px-3 py-1 text-xs transition",
+                active
+                  ? "border-indigo-500 bg-indigo-600 text-white"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:border-indigo-500/60",
+              )}
+            >
+              Q{q.quarter} {q.year}
+              {q.date && <span className="ml-1 text-[10px] opacity-70">{q.date.slice(5)}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {loading && <Skeleton className="h-64 w-full bg-zinc-800" />}
+
+      {!loading && summary && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+          {summary.error ? (
+            <div className="text-sm text-amber-300">
+              {summary.error}
+              {summary.configure_hint && (
+                <div className="mt-1 text-xs text-amber-200/80">{summary.configure_hint}</div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center justify-between text-[10px] text-zinc-500">
+                <span>
+                  {symbol} Q{summary.quarter} {summary.year} call{" "}
+                  {summary.call_date && `(${summary.call_date})`}
+                  {summary.transcript_truncated && " · transcript truncated"}
+                </span>
+                {summary.usage && (
+                  <span>
+                    {summary.usage.input_tokens} in / {summary.usage.output_tokens} out
+                  </span>
+                )}
+              </div>
+              <MarkdownLite text={summary.markdown ?? ""} />
+            </>
+          )}
+        </div>
+      )}
+
+      {!loading && !summary && (
+        <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
+          Pick a quarter above to generate an AI summary (cached 7 days per
+          quarter).
+        </div>
+      )}
     </div>
   );
 }

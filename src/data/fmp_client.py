@@ -297,6 +297,84 @@ def get_quote(symbol: str) -> dict:
     return {}
 
 
+def get_symbol_earnings(symbol: str, limit: int = 12) -> list[dict]:
+    """Historical + upcoming earnings dates for a symbol."""
+    cache_key = f"fmp_earn_{symbol}_{limit}"
+    data = _get(
+        f"/historical/earning_calendar/{symbol}",
+        params={"limit": limit},
+        cache_key=cache_key,
+        cache_ttl=12 * 60 * 60,
+    )
+    return data if isinstance(data, list) else []
+
+
+def get_symbol_dividends(symbol: str) -> list[dict]:
+    """Dividend history for a symbol."""
+    cache_key = f"fmp_div_{symbol}"
+    data = _get(
+        f"/historical-price-full/stock_dividend/{symbol}",
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    if isinstance(data, dict):
+        return data.get("historical") or []
+    return []
+
+
+def get_earnings_transcript(symbol: str, quarter: int, year: int) -> dict:
+    """Fetch a specific quarter's earnings call transcript."""
+    cache_key = f"fmp_trans_{symbol}_{year}_{quarter}"
+    data = _get(
+        f"/earning_call_transcript/{symbol}",
+        params={"quarter": quarter, "year": year},
+        cache_key=cache_key,
+        cache_ttl=30 * 24 * 60 * 60,
+    )
+    if isinstance(data, list) and data:
+        return data[0]
+    return {}
+
+
+def list_transcripts(symbol: str) -> list[dict]:
+    """List available transcripts (quarter / year) for a symbol."""
+    cache_key = f"fmp_translist_{symbol}"
+    data = _get(
+        f"/earning_call_transcript/{symbol}",
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    if not isinstance(data, list):
+        return []
+    seen: set[tuple[int, int]] = set()
+    out = []
+    for row in data:
+        q = row.get("quarter")
+        y = row.get("year")
+        if q and y and (q, y) not in seen:
+            seen.add((q, y))
+            out.append({
+                "quarter": q,
+                "year": y,
+                "date": row.get("date", "")[:10],
+            })
+    out.sort(key=lambda r: (r["year"], r["quarter"]), reverse=True)
+    return out[:8]
+
+
+def get_symbol_splits(symbol: str) -> list[dict]:
+    """Stock split history for a symbol."""
+    cache_key = f"fmp_split_{symbol}"
+    data = _get(
+        f"/historical-price-full/stock_split/{symbol}",
+        cache_key=cache_key,
+        cache_ttl=24 * 60 * 60,
+    )
+    if isinstance(data, dict):
+        return data.get("historical") or []
+    return []
+
+
 def get_historical_prices(symbol: str, days: int = 260):
     """Fetch daily OHLCV for any ticker FMP covers — returns a pandas DataFrame
     matching the shape Alpaca client produces (index=date, columns open/high/

@@ -201,6 +201,36 @@ export function useInstrumentNews(symbol: string, enabled = true) {
   });
 }
 
+export function useTranscriptList(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["transcripts", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/transcripts`),
+    enabled: enabled && !!symbol,
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+}
+
+export function useInstrumentEvents(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-events", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/events`),
+    enabled: enabled && !!symbol,
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function useInstrumentInsider(symbol: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instrument-insider", symbol],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(`/instrument/${symbol}/insider-trades`),
+    enabled: enabled && !!symbol,
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
 export function useMarketNews(enabled = true) {
   return useQuery({
     queryKey: ["market-news"],

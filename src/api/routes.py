@@ -72,6 +72,25 @@ def scan(
     return results
 
 
+@router.get("/company/{symbol}")
+def company_name(symbol: str):
+    """Return company name for a ticker symbol."""
+    sym = symbol.upper()
+    assets = client.get_tradeable_assets()
+    match = next((a for a in assets if a["symbol"] == sym), None)
+    if match:
+        return {"symbol": sym, "name": match["name"]}
+    # Fallback to FMP
+    try:
+        from src.data import fmp_client
+        profile = fmp_client.get_company_profile(sym)
+        if profile:
+            return {"symbol": sym, "name": profile.get("companyName", sym)}
+    except Exception:
+        pass
+    return {"symbol": sym, "name": sym}
+
+
 @router.get("/scan/{symbol}", response_model=ScanResult | None)
 def scan_symbol(symbol: str):
     """Detailed momentum analysis for a single stock."""
@@ -2554,6 +2573,138 @@ def instrument_indicators(symbol: str):
     if cached and time.time() - cached[0] < _SCAN_CACHE_TTL:
         return cached[1]
     result = get_indicator_series(symbol)
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/instrument/{symbol}/transcripts")
+def instrument_transcripts_list(symbol: str):
+    """List available quarterly earnings transcripts for a symbol."""
+    sym = symbol.upper()
+    cache_key = f"instr_tlist_{sym}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    from src.data import fmp_client
+    quarters = fmp_client.list_transcripts(sym)
+    result = {"symbol": sym, "quarters": quarters}
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/instrument/{symbol}/transcript/{year}/{quarter}")
+def instrument_transcript_summary(symbol: str, year: int, quarter: int):
+    """AI-summarized earnings call transcript for a given quarter."""
+    sym = symbol.upper()
+    cache_key = f"instr_trans_{sym}_{year}_{quarter}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 7 * 24 * 60 * 60:
+        return cached[1]
+    from src.ai.transcript import summarize_transcript
+    result = summarize_transcript(sym, quarter, year)
+    if "error" not in result:
+        _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+@router.get("/instrument/{symbol}/events")
+def instrument_events(symbol: str):
+    """Earnings / dividends / splits for the instrument Overview panel."""
+    sym = symbol.upper()
+    cache_key = f"instr_events_{sym}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    from src.data import fmp_client
+    from datetime import datetime
+
+    earnings = fmp_client.get_symbol_earnings(sym, limit=12) or []
+    dividends = fmp_client.get_symbol_dividends(sym) or []
+    splits = fmp_client.get_symbol_splits(sym) or []
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    upcoming = [e for e in earnings if (e.get("date") or "") >= today]
+    past = [e for e in earnings if (e.get("date") or "") < today][:8]
+
+    result = {
+        "symbol": sym,
+        "next_earnings": (
+            {
+                "date": upcoming[0].get("date", ""),
+                "eps_estimated": upcoming[0].get("epsEstimated"),
+                "revenue_estimated": upcoming[0].get("revenueEstimated"),
+            }
+            if upcoming else None
+        ),
+        "recent_earnings": [
+            {
+                "date": e.get("date", ""),
+                "eps": e.get("eps"),
+                "eps_estimated": e.get("epsEstimated"),
+                "revenue": e.get("revenue"),
+                "surprise_pct": _eps_surprise(e.get("eps"), e.get("epsEstimated")),
+            }
+            for e in past
+        ],
+        "recent_dividends": [
+            {
+                "date": d.get("date", "")[:10],
+                "dividend": d.get("dividend"),
+                "record_date": d.get("recordDate", "")[:10] if d.get("recordDate") else None,
+                "payment_date": d.get("paymentDate", "")[:10] if d.get("paymentDate") else None,
+            }
+            for d in (dividends or [])[:6]
+        ],
+        "recent_splits": [
+            {
+                "date": s.get("date", "")[:10],
+                "ratio": s.get("label"),
+                "numerator": s.get("numerator"),
+                "denominator": s.get("denominator"),
+            }
+            for s in (splits or [])[:4]
+        ],
+    }
+    _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
+def _eps_surprise(actual, estimated) -> float | None:
+    try:
+        if actual is None or estimated is None or estimated == 0:
+            return None
+        return round((float(actual) - float(estimated)) / abs(float(estimated)) * 100, 1)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/instrument/{symbol}/insider-trades")
+def instrument_insider(symbol: str, limit: int = Query(default=30, ge=1, le=100)):
+    """Insider transactions from FMP for the Insider tab."""
+    sym = symbol.upper()
+    cache_key = f"instr_insider_{sym}_{limit}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CACHE_TTL_LONG:
+        return cached[1]
+    from src.data import fmp_client
+    trades = fmp_client.get_insider_trades(sym, limit=limit)
+    # Normalize shape
+    rows = []
+    for t in trades or []:
+        rows.append({
+            "filing_date": t.get("filingDate", "")[:10],
+            "transaction_date": t.get("transactionDate", "")[:10],
+            "reporter_name": t.get("reportingName") or t.get("typeOfOwner", ""),
+            "reporter_title": t.get("typeOfOwner") or "",
+            "transaction_type": t.get("transactionType") or "",
+            "shares": t.get("securitiesTransacted", 0),
+            "price": t.get("price", 0),
+            "value": (t.get("securitiesTransacted", 0) or 0) * (t.get("price", 0) or 0),
+            "acquired_disposed": t.get("acquistionOrDisposition", ""),
+            "link": t.get("link", ""),
+        })
+    rows.sort(key=lambda r: r["filing_date"], reverse=True)
+    result = {"symbol": sym, "count": len(rows), "trades": rows[:limit]}
     _scan_cache[cache_key] = (time.time(), result)
     return result
 
