@@ -954,13 +954,17 @@ function heatCellBg(v: number | undefined): string {
 
 /* --------------- Pattern tab --------------- */
 
+type Level = { price: number; level_type?: string; strength?: number; touches?: number };
+type Trendline = { start_price: number; end_price: number; trend_type: string; touches?: number };
+type Pattern = { pattern_type: string; confidence: number; description?: string; bias?: string };
+
 type ChartPayload = {
-  bars: { timestamp: string; close: number; high: number; low: number }[];
   technical_analysis: {
-    support_resistance: { level: number; type: string; strength: number }[];
-    trendlines: { start_price: number; end_price: number; trend_type: string; strength: number }[];
-    patterns: { name: string; pattern_type: string; confidence: number; description: string }[];
-    trend_summary: string;
+    support_levels?: Level[];
+    resistance_levels?: Level[];
+    trendlines?: Trendline[];
+    patterns?: Pattern[];
+    trend_summary?: string;
   } | null;
 };
 
@@ -976,34 +980,41 @@ function PatternTab({ symbol }: { symbol: string }) {
       </div>
     );
   }
+  const supports = ta.support_levels ?? [];
+  const resistances = ta.resistance_levels ?? [];
+  const trendlines = ta.trendlines ?? [];
+  const patterns = ta.patterns ?? [];
+
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-        <div className="mb-1 text-xs font-semibold uppercase text-zinc-400">
-          Trend Summary
+      {ta.trend_summary && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="mb-1 text-xs font-semibold uppercase text-zinc-400">
+            Trend Summary
+          </div>
+          <div className="text-sm text-zinc-200">{ta.trend_summary}</div>
         </div>
-        <div className="text-sm text-zinc-200">{ta.trend_summary}</div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
           <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
             Support / Resistance
           </div>
-          {ta.support_resistance.length === 0 ? (
+          {supports.length === 0 && resistances.length === 0 ? (
             <div className="text-xs text-zinc-500">none detected</div>
           ) : (
             <ul className="space-y-1 text-sm">
-              {ta.support_resistance.slice(0, 6).map((lv, i) => (
-                <li key={i} className="flex justify-between">
-                  <span
-                    className={cn(
-                      lv.type.includes("support") ? "text-emerald-400" : "text-red-400"
-                    )}
-                  >
-                    {lv.type}
-                  </span>
-                  <span className="font-mono">${lv.level.toFixed(2)}</span>
+              {resistances.slice(0, 4).map((lv, i) => (
+                <li key={`r${i}`} className="flex justify-between">
+                  <span className="text-red-400">resistance</span>
+                  <span className="font-mono">${lv.price.toFixed(2)}</span>
+                </li>
+              ))}
+              {supports.slice(0, 4).map((lv, i) => (
+                <li key={`s${i}`} className="flex justify-between">
+                  <span className="text-emerald-400">support</span>
+                  <span className="font-mono">${lv.price.toFixed(2)}</span>
                 </li>
               ))}
             </ul>
@@ -1014,11 +1025,11 @@ function PatternTab({ symbol }: { symbol: string }) {
           <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
             Trendlines
           </div>
-          {ta.trendlines.length === 0 ? (
+          {trendlines.length === 0 ? (
             <div className="text-xs text-zinc-500">none detected</div>
           ) : (
             <ul className="space-y-1 text-sm">
-              {ta.trendlines.slice(0, 6).map((tl, i) => (
+              {trendlines.slice(0, 6).map((tl, i) => (
                 <li key={i} className="flex justify-between">
                   <span
                     className={cn(
@@ -1040,24 +1051,26 @@ function PatternTab({ symbol }: { symbol: string }) {
           <div className="mb-2 text-xs font-semibold uppercase text-zinc-400">
             Chart Patterns
           </div>
-          {ta.patterns.length === 0 ? (
+          {patterns.length === 0 ? (
             <div className="text-xs text-zinc-500">none detected</div>
           ) : (
             <ul className="space-y-2 text-sm">
-              {ta.patterns.map((p, i) => (
+              {patterns.map((p, i) => (
                 <li key={i}>
                   <div className="flex justify-between">
-                    <span className="text-zinc-200">{p.name}</span>
+                    <span className="text-zinc-200">{p.pattern_type.replace(/_/g, " ")}</span>
                     <span
                       className={cn(
                         "text-xs font-mono",
-                        p.pattern_type === "bullish" ? "text-emerald-400" : "text-red-400"
+                        p.bias === "bullish" ? "text-emerald-400" : "text-red-400"
                       )}
                     >
                       {(p.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
-                  <div className="text-xs text-zinc-500">{p.description}</div>
+                  {p.description && (
+                    <div className="text-xs text-zinc-500">{p.description}</div>
+                  )}
                 </li>
               ))}
             </ul>
