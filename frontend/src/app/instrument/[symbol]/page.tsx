@@ -290,34 +290,174 @@ function OverviewTab({
         />
       </div>
 
-      {/* AI agent placeholder */}
-      <div className="rounded-lg border border-zinc-800 bg-gradient-to-br from-zinc-950 to-indigo-950/30 p-4">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-300">
-          AI Agent (coming soon)
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {[
-            "What's happening?",
-            "Business explained simple",
-            "Competitors",
-            "Suppliers / Clients",
-            "Future Expectations",
-            "Full Analysis",
-            "Qualitative Scorecard",
-            "Investor Sentiment",
-          ].map((label) => (
-            <button
-              key={label}
-              disabled
-              className="cursor-not-allowed rounded-md border border-zinc-700 bg-zinc-900/50 p-2 text-xs text-zinc-400 opacity-70"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <AgentPanel symbol={header?.symbol ?? "-"} />
     </div>
   );
+}
+
+/* --------------- AI Agent panel --------------- */
+
+const AGENT_TOPICS: { key: string; label: string }[] = [
+  { key: "whats_happening", label: "What's happening?" },
+  { key: "business_simple", label: "Business explained simple" },
+  { key: "competitors", label: "Competitors" },
+  { key: "suppliers_clients", label: "Suppliers / Clients" },
+  { key: "future_expectations", label: "Future Expectations" },
+  { key: "full_analysis", label: "Full Analysis" },
+  { key: "qualitative_scorecard", label: "Qualitative Scorecard" },
+  { key: "investor_sentiment", label: "Investor Sentiment" },
+];
+
+type AgentResponse = {
+  markdown?: string;
+  error?: string;
+  configure_hint?: string;
+  model?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+};
+
+function AgentPanel({ symbol }: { symbol: string }) {
+  const [active, setActive] = useState<string>("");
+  const [response, setResponse] = useState<AgentResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function run(topic: string) {
+    setActive(topic);
+    setLoading(true);
+    setResponse(null);
+    try {
+      const r = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/instrument/${symbol}/agent/${topic}`,
+      );
+      const json = (await r.json()) as AgentResponse;
+      setResponse(json);
+    } catch (e) {
+      setResponse({ error: (e as Error).message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-indigo-900/40 bg-gradient-to-br from-zinc-950 to-indigo-950/30 p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">
+          AI Agent
+        </div>
+        <div className="text-[10px] text-zinc-500">
+          Powered by Claude. Cached 24h per topic to control cost.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {AGENT_TOPICS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => run(t.key)}
+            disabled={loading && active === t.key}
+            className={cn(
+              "rounded-md border p-2 text-xs transition",
+              active === t.key
+                ? "border-indigo-500 bg-indigo-600/20 text-indigo-200"
+                : "border-zinc-700 bg-zinc-900/50 text-zinc-200 hover:border-indigo-500/60 hover:text-indigo-200",
+            )}
+          >
+            {loading && active === t.key ? "Thinking..." : t.label}
+          </button>
+        ))}
+      </div>
+
+      {response && (
+        <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-900/70 p-3">
+          {response.error ? (
+            <div className="text-sm text-amber-300">
+              {response.error}
+              {response.configure_hint && (
+                <div className="mt-1 text-xs text-amber-200/80">{response.configure_hint}</div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center justify-between text-[10px] text-zinc-500">
+                <span>{AGENT_TOPICS.find((t) => t.key === active)?.label}</span>
+                {response.usage && (
+                  <span>
+                    {response.usage.input_tokens} in / {response.usage.output_tokens} out
+                  </span>
+                )}
+              </div>
+              <MarkdownLite text={response.markdown ?? ""} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarkdownLite({ text }: { text: string }) {
+  // Minimal markdown rendering — bold, bullets, numbered lists, h3
+  const lines = text.split(/\r?\n/);
+  const out: React.ReactNode[] = [];
+  let inList: "ul" | "ol" | null = null;
+  let buffer: React.ReactNode[] = [];
+
+  function flush() {
+    if (buffer.length === 0) return;
+    if (inList === "ul") out.push(<ul key={out.length} className="ml-4 list-disc space-y-0.5 text-sm">{buffer}</ul>);
+    else if (inList === "ol") out.push(<ol key={out.length} className="ml-4 list-decimal space-y-0.5 text-sm">{buffer}</ol>);
+    else out.push(<div key={out.length} className="space-y-1 text-sm text-zinc-200">{buffer}</div>);
+    buffer = [];
+  }
+
+  function render(line: string): React.ReactNode {
+    // **bold**
+    const parts: React.ReactNode[] = [];
+    const regex = /\*\*([^*]+)\*\*/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let i = 0;
+    while ((m = regex.exec(line))) {
+      if (m.index > last) parts.push(line.slice(last, m.index));
+      parts.push(<strong key={i++} className="font-semibold text-indigo-200">{m[1]}</strong>);
+      last = m.index + m[0].length;
+    }
+    if (last < line.length) parts.push(line.slice(last));
+    return parts;
+  }
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) {
+      flush();
+      inList = null;
+      continue;
+    }
+    if (/^###\s+/.test(line)) {
+      flush();
+      inList = null;
+      out.push(
+        <h3 key={out.length} className="mt-3 text-xs font-semibold uppercase text-indigo-300">
+          {line.replace(/^###\s+/, "")}
+        </h3>
+      );
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      if (inList !== "ul") { flush(); inList = "ul"; }
+      buffer.push(<li key={buffer.length}>{render(line.replace(/^[-*]\s+/, ""))}</li>);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      if (inList !== "ol") { flush(); inList = "ol"; }
+      buffer.push(<li key={buffer.length}>{render(line.replace(/^\d+\.\s+/, ""))}</li>);
+      continue;
+    }
+    if (inList) { flush(); inList = null; }
+    buffer.push(<p key={buffer.length}>{render(line)}</p>);
+  }
+  flush();
+  return <>{out}</>;
 }
 
 function ReturnTile({

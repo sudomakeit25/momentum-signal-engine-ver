@@ -2607,6 +2607,46 @@ def sector_map(days: int = Query(default=365, ge=90, le=1825)):
     return result
 
 
+# --- AI Agent ---
+
+from src.ai.agent import list_topics, run_agent
+
+
+@router.get("/agent/topics")
+def agent_topics():
+    """List available AI agent topics."""
+    return list_topics()
+
+
+@router.get("/instrument/{symbol}/agent/{topic}")
+def instrument_agent(symbol: str, topic: str):
+    """Run the AI agent for one topic on a symbol. Cached 24h per (symbol, topic)."""
+    sym = symbol.upper()
+    cache_key = f"agent_{sym}_{topic}"
+    cached = _scan_cache.get(cache_key)
+    if cached and time.time() - cached[0] < 24 * 60 * 60:
+        return cached[1]
+    # Pass the FMP-known company name when we have it cached
+    from src.scanner.instrument_fundamentals import get_fundamentals
+    name = None
+    fund_cache = _scan_cache.get(f"instr_fund_{sym}")
+    if fund_cache:
+        try:
+            name = fund_cache[1].get("header", {}).get("name")
+        except Exception:
+            pass
+    if not name:
+        try:
+            name = get_fundamentals(sym).get("header", {}).get("name") or sym
+        except Exception:
+            name = sym
+    result = run_agent(sym, topic, company_name=name)
+    # Only cache successful calls
+    if "error" not in result:
+        _scan_cache[cache_key] = (time.time(), result)
+    return result
+
+
 # --- Profile Screener (yfinance fundamentals) ---
 
 from src.scanner.profile_screener import list_profiles, list_sectors, screen as profile_screen
