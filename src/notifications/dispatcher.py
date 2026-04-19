@@ -1,16 +1,82 @@
 """Notification dispatcher: webhook (Discord/Telegram/Slack) + SMS (Twilio / Email Gateway)."""
 
+import hashlib
 import logging
 import json
 import smtplib
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
 
 import requests as http_requests
 
 logger = logging.getLogger("mse.notifications")
+
+_SMS_FINGERPRINT_KEY = "mse:sms_fingerprints"  # { hash: iso_ts } — 30m TTL
+_SMS_FINGERPRINT_TTL = 30 * 60  # seconds
+
+
+def _deduped_signals_for_sms(signals: list) -> list:
+    """Collapse same symbol:action:setup to the single highest-confidence signal.
+
+    A secondary defense against the signal generator occasionally emitting
+    multiple variants of the same setup (which was filling SMS bodies with
+    duplicate rows like '+PFE BUY 70%' and '+PFE BUY 60%').
+    """
+    by_key: dict[str, object] = {}
+    for s in signals:
+        try:
+            setup = s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
+        except Exception:
+            setup = ""
+        key = f"{s.symbol}:{s.action.value}:{setup}"
+        existing = by_key.get(key)
+        if existing is None or getattr(s, "confidence", 0) > getattr(existing, "confidence", 0):
+            by_key[key] = s
+    return list(by_key.values())
+
+
+def _recent_sms_fingerprints() -> dict[str, str]:
+    """Load the recent-SMS fingerprint map from Redis."""
+    try:
+        from src.data.redis_store import _get_redis
+        redis = _get_redis()
+        if not redis:
+            return {}
+        raw = redis.get(_SMS_FINGERPRINT_KEY)
+        if not raw:
+            return {}
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        # Prune expired
+        now = datetime.now(timezone.utc)
+        fresh = {
+            h: ts for h, ts in (data or {}).items()
+            if (now - datetime.fromisoformat(ts)).total_seconds() < _SMS_FINGERPRINT_TTL
+        }
+        return fresh
+    except Exception as e:
+        logger.debug("Fingerprint load failed: %s", e)
+        return {}
+
+
+def _record_sms_fingerprint(fingerprint: str) -> None:
+    """Mark a fingerprint as just-sent, for the 30-minute window."""
+    try:
+        from src.data.redis_store import _get_redis
+        redis = _get_redis()
+        if not redis:
+            return
+        data = _recent_sms_fingerprints()
+        data[fingerprint] = datetime.now(timezone.utc).isoformat()
+        redis.set(_SMS_FINGERPRINT_KEY, json.dumps(data))
+    except Exception as e:
+        logger.debug("Fingerprint save failed: %s", e)
+
+
+def _fingerprint_of_body(body: str) -> str:
+    return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()[:16]
 
 # File-based fallback for local dev
 _CONFIG_PATH = Path(".notification_config.json")
@@ -178,9 +244,15 @@ def send_webhook(url: str, platform: str, signals: list) -> bool:
 
 
 def _format_sms_body(signals: list) -> str:
-    """Build a short SMS body. Carrier gateways cap at 160 chars."""
+    """Build a short SMS body. Carrier gateways cap at 160 chars.
+
+    Dedupes signals by (symbol, action, setup_type) and keeps the highest-
+    confidence variant so the body never contains the same setup twice.
+    """
+    deduped = _deduped_signals_for_sms(signals)
+    deduped.sort(key=lambda s: getattr(s, "confidence", 0), reverse=True)
     lines = ["MSE Alert"]
-    for s in signals:
+    for s in deduped:
         arrow = "+" if s.action.value == "BUY" else "-"
         line = f"{arrow}{s.symbol} {s.action.value} ${s.entry:.2f} {s.confidence*100:.0f}%"
         # Stop adding lines if we'd exceed 155 chars
@@ -219,9 +291,15 @@ def send_email_sms(to_phone: str, carrier: str, signals: list) -> bool:
         return False
 
     to_addr = f"{digits}@{gateway}"
-    # Sort by confidence and send top signals that fit in one message
-    sorted_signals = sorted(signals, key=lambda s: s.confidence, reverse=True)
-    body = _format_sms_body(sorted_signals)
+    body = _format_sms_body(signals)
+
+    # Fingerprint check — if we sent the exact same body in the last 30 min
+    # (any cause: restart, double-cycle, parallel worker), silently skip.
+    fp = _fingerprint_of_body(body)
+    recent = _recent_sms_fingerprints()
+    if fp in recent:
+        logger.info("Email SMS suppressed (duplicate body sent %s)", recent[fp])
+        return False
 
     try:
         msg = MIMEText(body)
@@ -233,6 +311,7 @@ def send_email_sms(to_phone: str, carrier: str, signals: list) -> bool:
             server.login(settings.smtp_email, settings.smtp_password)
             server.send_message(msg)
 
+        _record_sms_fingerprint(fp)
         logger.info("Email SMS sent to %s via %s (%d chars)", to_addr, carrier, len(body))
         return True
     except Exception as e:
@@ -256,12 +335,19 @@ def send_sms(to_phone: str, signals: list) -> bool:
 
         body = _format_sms_body(signals)
 
+        fp = _fingerprint_of_body(body)
+        recent = _recent_sms_fingerprints()
+        if fp in recent:
+            logger.info("Twilio SMS suppressed (duplicate body sent %s)", recent[fp])
+            return False
+
         message = client.messages.create(
             body=body,
             from_=settings.twilio_from_number,
             to=to_phone,
         )
 
+        _record_sms_fingerprint(fp)
         logger.info("SMS sent to %s: SID %s", to_phone, message.sid)
         return True
     except Exception as e:

@@ -180,37 +180,10 @@ def _refresh_loop():
             _seen_signal_keys.update(current_keys)
             save_seen_signals(_seen_signal_keys, today_str)
 
-            # --- Watchlist alerts: only re-fire keys we haven't already dispatched
-            # this cycle. (Was previously double-firing because the seen-set had
-            # just been updated to include current_keys — now we explicitly skip
-            # anything that just went out.)
-            try:
-                from src.data.redis_store import get_watchlist
-                watchlist = get_watchlist()
-                if watchlist:
-                    dispatched_keys = {_signal_key(s) for s in new_signals}
-                    watchlist_new = [
-                        s for s in all_signals
-                        if s.symbol in watchlist
-                        and _signal_key(s) not in dispatched_keys
-                        and _signal_key(s) not in _seen_signal_keys.difference(current_keys)
-                    ]
-                    # The above keeps the original "notify on watchlist" behavior
-                    # while avoiding the double-dispatch that was happening here.
-                    if watchlist_new:
-                        # Be extra safe: only fire the FIRST time per watchlist key per day
-                        watchlist_new = [
-                            s for s in watchlist_new
-                            if _signal_key(s) not in _seen_signal_keys
-                        ]
-                    if watchlist_new:
-                        logger.info("Watchlist alert: %d signals for watched stocks", len(watchlist_new))
-                        dispatch_alerts(watchlist_new)
-                        # Mark these as seen too
-                        _seen_signal_keys.update(_signal_key(s) for s in watchlist_new)
-                        save_seen_signals(_seen_signal_keys, today_str)
-            except Exception as e:
-                logger.debug("Watchlist alert check failed: %s", e)
+            # (The previous 'watchlist alerts' block here double-dispatched
+            # the same signals that had just gone out in the main block above.
+            # Removed — a watchlist symbol already fires through the main
+            # dispatch when a new signal appears on it.)
 
             # Preserve the legacy cache slot the /scan endpoint reads with defaults
             legacy_top20 = [r for r in results if r.price <= 500.0][:20]
