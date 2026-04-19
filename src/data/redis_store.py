@@ -14,6 +14,8 @@ _TRADES_KEY = "mse:trades"
 _ALERT_HISTORY_KEY = "mse:alert_history"
 _WATCHLIST_KEY = "mse:watchlist"
 _LEADERBOARD_KEY = "mse:leaderboard"
+_SEEN_SIGNALS_KEY = "mse:seen_signals"  # daily-rolled set of dispatched keys
+_SEEN_SIGNALS_DATE_KEY = "mse:seen_signals_date"
 
 
 def _get_redis():
@@ -246,4 +248,37 @@ def update_leaderboard_signals(signals: list[dict]) -> bool:
         return True
     except Exception as e:
         logger.warning("Failed to update leaderboard: %s", e)
+        return False
+
+
+# --- Seen-signal tracking (dedup for auto-dispatch) ---
+
+def load_seen_signals() -> tuple[set[str], str]:
+    """Return (seen_keys, stored_date). Empty set + '' when Redis is absent."""
+    redis = _get_redis()
+    if not redis:
+        return set(), ""
+    try:
+        raw = redis.get(_SEEN_SIGNALS_KEY)
+        date = redis.get(_SEEN_SIGNALS_DATE_KEY) or ""
+        if not raw:
+            return set(), str(date)
+        keys = json.loads(raw) if isinstance(raw, str) else raw
+        return set(keys or []), str(date)
+    except Exception as e:
+        logger.warning("Failed to load seen signals: %s", e)
+        return set(), ""
+
+
+def save_seen_signals(keys: set[str], date_str: str) -> bool:
+    """Persist the current seen-signal set + its day stamp."""
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        redis.set(_SEEN_SIGNALS_KEY, json.dumps(sorted(keys)))
+        redis.set(_SEEN_SIGNALS_DATE_KEY, date_str)
+        return True
+    except Exception as e:
+        logger.warning("Failed to save seen signals: %s", e)
         return False

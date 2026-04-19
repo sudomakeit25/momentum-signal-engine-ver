@@ -61,9 +61,28 @@ def _refresh_loop():
     from concurrent.futures import ThreadPoolExecutor
     from src.notifications.dispatcher import dispatch_alerts
 
-    _seen_signal_keys: set[str] = set()
-    _seen_date: str = ""  # reset accumulator daily
-    _first_cycle = True
+    from src.data.redis_store import load_seen_signals, save_seen_signals
+
+    # Load persisted dedup state on boot so a Render restart doesn't mass-refire.
+    _seen_signal_keys, _seen_date = load_seen_signals()
+    logger.info(
+        "Auto-dispatch boot: loaded %d seen keys (date=%s)",
+        len(_seen_signal_keys), _seen_date or "none",
+    )
+
+    def _signal_key(s) -> str:
+        """Stable dedup key — symbol + action + setup type only.
+
+        Price intentionally omitted: small price drift between cycles on the
+        same detected setup was causing the same alert to re-fire.
+        """
+        try:
+            setup = (
+                s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
+            )
+        except Exception:
+            setup = ""
+        return f"{s.symbol}:{s.action.value}:{setup}"
 
     while not _stop_event.is_set():
         try:
@@ -102,26 +121,34 @@ def _refresh_loop():
 
             logger.info("Signal check: %d total signals from %d results", len(all_signals), len(results))
 
-            current_keys = set()
-            for s in all_signals:
-                key = f"{s.symbol}:{s.action.value}:{s.entry:.2f}"
-                current_keys.add(key)
+            current_keys = {_signal_key(s) for s in all_signals}
 
-            # Reset accumulated keys at midnight so signals can re-fire the next day
+            # Daily rollover: start a fresh seen-set BUT still seed with current
+            # keys so the rollover itself doesn't re-fire every live signal.
             from datetime import datetime
             today_str = datetime.now().strftime("%Y-%m-%d")
             if today_str != _seen_date:
-                _seen_signal_keys = set()
+                logger.info(
+                    "Daily rollover: clearing %d seen keys (was %s -> %s)",
+                    len(_seen_signal_keys), _seen_date or "none", today_str,
+                )
+                _seen_signal_keys = set(current_keys)
                 _seen_date = today_str
-                _first_cycle = True
-
-            if _first_cycle:
-                new_signals = all_signals
-                _first_cycle = False
-                logger.info("First cycle: treating all %d signals as new", len(new_signals))
+                save_seen_signals(_seen_signal_keys, _seen_date)
+                new_signals = []  # do not re-fire on rollover
+            elif not _seen_signal_keys:
+                # Cold start with no persisted state: seed, don't re-fire.
+                logger.info(
+                    "Cold-start seed: recording %d current keys without dispatching",
+                    len(current_keys),
+                )
+                _seen_signal_keys = set(current_keys)
+                save_seen_signals(_seen_signal_keys, today_str)
+                new_signals = []
             else:
-                new_signals = [s for s in all_signals
-                               if f"{s.symbol}:{s.action.value}:{s.entry:.2f}" not in _seen_signal_keys]
+                new_signals = [
+                    s for s in all_signals if _signal_key(s) not in _seen_signal_keys
+                ]
 
             # --- Track signals for leaderboard ---
             if new_signals:
@@ -148,19 +175,40 @@ def _refresh_loop():
             else:
                 logger.info("No new signals to dispatch")
 
-            _seen_signal_keys.update(current_keys)  # accumulate, don't replace
+            # Record every currently-live key as seen and persist, so the next
+            # cycle's dedup sees them even after a restart mid-day.
+            _seen_signal_keys.update(current_keys)
+            save_seen_signals(_seen_signal_keys, today_str)
 
-            # --- Watchlist alerts: check if any watched symbol has new signals ---
+            # --- Watchlist alerts: only re-fire keys we haven't already dispatched
+            # this cycle. (Was previously double-firing because the seen-set had
+            # just been updated to include current_keys — now we explicitly skip
+            # anything that just went out.)
             try:
                 from src.data.redis_store import get_watchlist
                 watchlist = get_watchlist()
                 if watchlist:
-                    watchlist_signals = [s for s in all_signals if s.symbol in watchlist]
-                    watchlist_new = [s for s in watchlist_signals
-                                    if f"{s.symbol}:{s.action.value}:{s.entry:.2f}" not in _seen_signal_keys]
+                    dispatched_keys = {_signal_key(s) for s in new_signals}
+                    watchlist_new = [
+                        s for s in all_signals
+                        if s.symbol in watchlist
+                        and _signal_key(s) not in dispatched_keys
+                        and _signal_key(s) not in _seen_signal_keys.difference(current_keys)
+                    ]
+                    # The above keeps the original "notify on watchlist" behavior
+                    # while avoiding the double-dispatch that was happening here.
+                    if watchlist_new:
+                        # Be extra safe: only fire the FIRST time per watchlist key per day
+                        watchlist_new = [
+                            s for s in watchlist_new
+                            if _signal_key(s) not in _seen_signal_keys
+                        ]
                     if watchlist_new:
                         logger.info("Watchlist alert: %d signals for watched stocks", len(watchlist_new))
                         dispatch_alerts(watchlist_new)
+                        # Mark these as seen too
+                        _seen_signal_keys.update(_signal_key(s) for s in watchlist_new)
+                        save_seen_signals(_seen_signal_keys, today_str)
             except Exception as e:
                 logger.debug("Watchlist alert check failed: %s", e)
 
