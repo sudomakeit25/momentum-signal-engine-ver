@@ -4,34 +4,56 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Svg, { Path, Line as SvgLine, Circle, Text as SvgText } from "react-native-svg";
+import Svg, {
+  Circle,
+  Line as SvgLine,
+  Path,
+  Rect,
+  Text as SvgText,
+} from "react-native-svg";
 import {
   api,
+  API_BASE,
   AgentTopic,
   ChartBar,
+  EventsResponse,
+  FibonacciResponse,
+  IchimokuResponse,
   IndicatorsResponse,
+  InsiderTrade,
+  MultiTFResponse,
   SeasonalityHeatmapRow,
+  TranscriptQuarter,
+  VolumeProfileResponse,
 } from "../../src/lib/api";
 import { colors, radius, spacing } from "../../src/lib/theme";
 
 type Section =
   | "Overview"
   | "Indicators"
+  | "Pattern"
   | "Seasonality"
+  | "Earnings"
+  | "Insider"
   | "Fundamentals"
   | "News";
 const SECTIONS: Section[] = [
   "Overview",
   "Indicators",
+  "Pattern",
   "Seasonality",
+  "Earnings",
+  "Insider",
   "Fundamentals",
   "News",
 ];
@@ -46,7 +68,12 @@ export default function InstrumentScreen() {
       <Stack.Screen
         options={{
           title: symbol,
-          headerRight: () => <WatchlistStar symbol={symbol} />,
+          headerRight: () => (
+            <View style={{ flexDirection: "row" }}>
+              <ShareButton symbol={symbol} />
+              <WatchlistStar symbol={symbol} />
+            </View>
+          ),
         }}
       />
 
@@ -80,7 +107,10 @@ export default function InstrumentScreen() {
       >
         {section === "Overview" && <OverviewSection symbol={symbol} />}
         {section === "Indicators" && <IndicatorsSection symbol={symbol} />}
+        {section === "Pattern" && <PatternSection symbol={symbol} />}
         {section === "Seasonality" && <SeasonalitySection symbol={symbol} />}
+        {section === "Earnings" && <EarningsSection symbol={symbol} />}
+        {section === "Insider" && <InsiderSection symbol={symbol} />}
         {section === "Fundamentals" && <FundamentalsSection symbol={symbol} />}
         {section === "News" && <NewsSection symbol={symbol} />}
       </ScrollView>
@@ -628,6 +658,72 @@ function IndicatorsSection({ symbol }: { symbol: string }) {
           colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
         />
       </View>
+
+      <MultiTimeframeCard symbol={symbol} />
+    </View>
+  );
+}
+
+function MultiTimeframeCard({ symbol }: { symbol: string }) {
+  const q = useQuery({
+    queryKey: ["multi-tf", symbol],
+    queryFn: () => api.multiTf(symbol),
+  });
+  if (q.isLoading) return null;
+  const d: MultiTFResponse | undefined = q.data;
+  if (!d || !d.timeframes) return null;
+  const tfKeys = Object.keys(d.timeframes);
+  if (!tfKeys.length) return null;
+
+  const alignColor =
+    d.alignment === "bullish"
+      ? colors.bullish
+      : d.alignment === "bearish"
+      ? colors.bearish
+      : colors.amber;
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Multi-Timeframe Alignment</Text>
+      {d.alignment && (
+        <Text
+          style={[styles.mono, { color: alignColor, marginBottom: spacing.sm }]}
+        >
+          {d.alignment.toUpperCase()} · strength{" "}
+          {((d.alignment_strength ?? 0) * 100).toFixed(0)}%
+        </Text>
+      )}
+      {tfKeys.map((key) => {
+        const tf = d.timeframes[key];
+        const color =
+          tf.trend === "bullish"
+            ? colors.bullish
+            : tf.trend === "bearish"
+            ? colors.bearish
+            : tf.trend.startsWith("turning")
+            ? colors.amber
+            : colors.textMuted;
+        return (
+          <View
+            key={key}
+            style={{
+              paddingVertical: 6,
+              borderBottomColor: colors.borderSubtle,
+              borderBottomWidth: 1,
+            }}
+          >
+            <View style={styles.row}>
+              <Text style={styles.mono}>{tf.label}</Text>
+              <Text style={[styles.mono, { color }]}>
+                {tf.trend.replace(/_/g, " ")}
+              </Text>
+            </View>
+            <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>
+              {tf.summary}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -1084,6 +1180,635 @@ function SentimentBadge({ s }: { s: string }) {
   );
 }
 
+/* --- Share button --- */
+
+function ShareButton({ symbol }: { symbol: string }) {
+  const onPress = async () => {
+    try {
+      const webHost =
+        API_BASE.replace("api", "app")
+          .replace("onrender.com", "vercel.app") ||
+        "https://momentum-signal-engine.vercel.app";
+      const url = `${webHost.replace(/\/$/, "")}/instrument/${symbol}`;
+      await Share.share({
+        message: `${symbol} on Momentum Signal Engine — ${url}`,
+        url,
+        title: symbol,
+      });
+    } catch {
+      // user cancelled
+    }
+  };
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={10}
+      style={{ paddingHorizontal: spacing.sm, paddingVertical: spacing.sm }}
+    >
+      <Text style={{ color: colors.primary, fontSize: 18 }}>↗</Text>
+    </Pressable>
+  );
+}
+
+/* --- Pattern tab --- */
+
+function PatternSection({ symbol }: { symbol: string }) {
+  const chartQ = useQuery({
+    queryKey: ["chart-pattern", symbol],
+    queryFn: () => api.chart(symbol, 200),
+  });
+  const fibQ = useQuery({
+    queryKey: ["fib", symbol],
+    queryFn: () => api.fibonacci(symbol),
+  });
+  const ichiQ = useQuery({
+    queryKey: ["ichi", symbol],
+    queryFn: () => api.ichimoku(symbol),
+  });
+  const vpQ = useQuery({
+    queryKey: ["vp", symbol],
+    queryFn: () => api.volumeProfile(symbol),
+  });
+
+  if (chartQ.isLoading) return <Loading />;
+  const ta = (chartQ.data as { technical_analysis?: any })?.technical_analysis;
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      {ta?.trend_summary && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Trend Summary</Text>
+          <Text style={styles.bullet}>{ta.trend_summary}</Text>
+        </View>
+      )}
+
+      {ta && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Support / Resistance</Text>
+          {(ta.resistance_levels ?? []).slice(0, 5).map((r: any, i: number) => (
+            <LevelRow key={`r${i}`} label="R" level={r} color={colors.bearish} />
+          ))}
+          {(ta.support_levels ?? []).slice(0, 5).map((s: any, i: number) => (
+            <LevelRow key={`s${i}`} label="S" level={s} color={colors.bullish} />
+          ))}
+          {(ta.resistance_levels?.length ?? 0) +
+            (ta.support_levels?.length ?? 0) ===
+            0 && <Text style={styles.muted}>No clear levels detected.</Text>}
+        </View>
+      )}
+
+      {ta && ta.patterns && ta.patterns.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Chart Patterns</Text>
+          {ta.patterns.slice(0, 4).map((p: any, i: number) => (
+            <View
+              key={i}
+              style={[styles.retRow, { flexDirection: "column", gap: 2 }]}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <Text style={[styles.mono, { color: biasColor(p.bias) }]}>
+                  {String(p.pattern_type).replace(/_/g, " ")}
+                </Text>
+                <Text style={styles.muted}>
+                  {(p.confidence * 100).toFixed(0)}%
+                  {p.target_price ? ` · tgt $${p.target_price.toFixed(2)}` : ""}
+                </Text>
+              </View>
+              {p.description && (
+                <Text style={[styles.muted, { fontSize: 11 }]}>
+                  {p.description}
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {ta && ta.trendlines && ta.trendlines.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Trendlines</Text>
+          {ta.trendlines.slice(0, 5).map((t: any, i: number) => (
+            <View key={i} style={styles.retRow}>
+              <Text
+                style={[
+                  styles.mono,
+                  {
+                    color:
+                      t.trend_type === "uptrend"
+                        ? colors.bullish
+                        : colors.bearish,
+                  },
+                ]}
+              >
+                {t.trend_type} · {t.touches} touches
+              </Text>
+              <Text style={styles.muted}>
+                ${t.start_price?.toFixed(2)} → ${t.end_price?.toFixed(2)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <FibonacciCard data={fibQ.data} loading={fibQ.isLoading} />
+      <IchimokuCard data={ichiQ.data} loading={ichiQ.isLoading} />
+      <VolumeProfileCard data={vpQ.data} loading={vpQ.isLoading} />
+    </View>
+  );
+}
+
+function LevelRow({
+  label,
+  level,
+  color,
+}: {
+  label: string;
+  level: { price: number; strength: number; touches: number };
+  color: string;
+}) {
+  return (
+    <View style={styles.retRow}>
+      <Text style={[styles.mono, { color }]}>
+        {label} ${level.price.toFixed(2)}
+      </Text>
+      <Text style={styles.muted}>
+        {level.touches} touches · str {(level.strength * 100).toFixed(0)}%
+      </Text>
+    </View>
+  );
+}
+
+function biasColor(b: string): string {
+  if (b === "bullish") return colors.bullish;
+  if (b === "bearish") return colors.bearish;
+  return colors.textMuted;
+}
+
+function FibonacciCard({
+  data,
+  loading,
+}: {
+  data: FibonacciResponse | undefined;
+  loading: boolean;
+}) {
+  if (loading) return null;
+  if (!data || data.error || !data.levels) return null;
+  const levelEntries = Object.entries(data.levels);
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Fibonacci · {data.trend ?? ""}</Text>
+      <Text style={styles.muted}>
+        Swing high ${data.high?.toFixed(2)} → low ${data.low?.toFixed(2)}
+      </Text>
+      {levelEntries.map(([k, v]) => {
+        const isNearest = k === data.nearest_level;
+        return (
+          <View key={k} style={styles.retRow}>
+            <Text
+              style={[
+                styles.mono,
+                isNearest && { color: colors.amber, fontWeight: "700" },
+              ]}
+            >
+              {k}
+            </Text>
+            <Text
+              style={[
+                styles.mono,
+                isNearest && { color: colors.amber, fontWeight: "700" },
+              ]}
+            >
+              ${v.toFixed(2)}
+              {isNearest ? "  ← nearest" : ""}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function IchimokuCard({
+  data,
+  loading,
+}: {
+  data: IchimokuResponse | undefined;
+  loading: boolean;
+}) {
+  if (loading) return null;
+  if (!data || data.error) return null;
+  const signalColor =
+    data.signal === "bullish"
+      ? colors.bullish
+      : data.signal === "bearish"
+      ? colors.bearish
+      : colors.amber;
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Ichimoku</Text>
+      <View style={styles.retRow}>
+        <Text style={styles.muted}>Signal</Text>
+        <Text style={[styles.mono, { color: signalColor }]}>
+          {data.signal?.replace(/_/g, " ")}
+        </Text>
+      </View>
+      <View style={styles.retRow}>
+        <Text style={styles.muted}>TK cross</Text>
+        <Text
+          style={[
+            styles.mono,
+            {
+              color:
+                data.tk_cross === "bullish" ? colors.bullish : colors.bearish,
+            },
+          ]}
+        >
+          {data.tk_cross}
+        </Text>
+      </View>
+      <View style={styles.retRow}>
+        <Text style={styles.muted}>Tenkan / Kijun</Text>
+        <Text style={styles.mono}>
+          ${data.tenkan?.toFixed(2)} / ${data.kijun?.toFixed(2)}
+        </Text>
+      </View>
+      <View style={styles.retRow}>
+        <Text style={styles.muted}>Cloud</Text>
+        <Text style={styles.mono}>
+          ${data.cloud_bottom?.toFixed(2)} – ${data.cloud_top?.toFixed(2)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function VolumeProfileCard({
+  data,
+  loading,
+}: {
+  data: VolumeProfileResponse | undefined;
+  loading: boolean;
+}) {
+  if (loading) return null;
+  if (!data || data.error || !data.profile) return null;
+  const maxVol = Math.max(...data.profile.map((b) => b.volume), 1);
+  const current = data.current ?? 0;
+  const poc = data.poc ?? 0;
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Volume Profile · POC ${poc.toFixed(2)}</Text>
+      <Text style={styles.muted}>
+        Value area ${data.value_area_low?.toFixed(2)} – $
+        {data.value_area_high?.toFixed(2)}
+      </Text>
+      <View style={{ marginTop: spacing.sm, gap: 2 }}>
+        {[...data.profile]
+          .slice()
+          .reverse()
+          .map((b, i) => {
+            const pct = b.volume / maxVol;
+            const isCurrent =
+              current >= b.price_low && current < b.price_high;
+            const isPoc = poc >= b.price_low && poc < b.price_high;
+            return (
+              <View
+                key={i}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                <Text
+                  style={[
+                    styles.muted,
+                    { width: 60, fontSize: 10, fontVariant: ["tabular-nums"] },
+                  ]}
+                >
+                  ${b.price_mid.toFixed(1)}
+                </Text>
+                <View style={{ flex: 1 }}>
+                  <View
+                    style={{
+                      width: `${pct * 100}%`,
+                      height: 8,
+                      backgroundColor: isPoc
+                        ? colors.amber
+                        : isCurrent
+                        ? colors.primary
+                        : colors.bgCard,
+                      borderRadius: 2,
+                    }}
+                  />
+                </View>
+              </View>
+            );
+          })}
+      </View>
+    </View>
+  );
+}
+
+/* --- Earnings tab (events + transcripts) --- */
+
+function EarningsSection({ symbol }: { symbol: string }) {
+  const eventsQ = useQuery({
+    queryKey: ["events", symbol],
+    queryFn: () => api.events(symbol),
+  });
+  const transcriptsQ = useQuery({
+    queryKey: ["transcripts", symbol],
+    queryFn: () => api.transcripts(symbol),
+  });
+  const [openQuarter, setOpenQuarter] = useState<TranscriptQuarter | null>(
+    null,
+  );
+
+  if (eventsQ.isLoading) return <Loading />;
+  const e: EventsResponse | undefined = eventsQ.data;
+  if (!e) return <ErrorCard message="no events" />;
+
+  const quarters = transcriptsQ.data?.quarters ?? [];
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      {e.next_earnings && (
+        <View
+          style={[styles.card, { borderColor: colors.primary, borderWidth: 1 }]}
+        >
+          <Text style={[styles.cardTitle, { color: colors.primary }]}>
+            Next Earnings
+          </Text>
+          <Text style={styles.bigMono}>{e.next_earnings.date}</Text>
+          <Text style={styles.muted}>
+            {e.next_earnings.eps_estimated
+              ? `EPS est $${e.next_earnings.eps_estimated.toFixed(2)}`
+              : "EPS est --"}
+            {e.next_earnings.revenue_estimated
+              ? ` · Rev est ${fmtMoney(e.next_earnings.revenue_estimated)}`
+              : ""}
+          </Text>
+        </View>
+      )}
+
+      {e.recent_earnings.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Recent Earnings</Text>
+          {e.recent_earnings.map((r, i) => (
+            <View key={i} style={styles.retRow}>
+              <Text style={styles.mono}>{r.date}</Text>
+              <View style={{ flexDirection: "row", gap: spacing.md }}>
+                <Text style={styles.muted}>
+                  EPS {r.eps?.toFixed(2) ?? "--"}
+                </Text>
+                {r.surprise_pct !== null && (
+                  <Text
+                    style={[
+                      styles.mono,
+                      {
+                        color:
+                          (r.surprise_pct ?? 0) >= 0
+                            ? colors.bullish
+                            : colors.bearish,
+                      },
+                    ]}
+                  >
+                    {r.surprise_pct >= 0 ? "+" : ""}
+                    {r.surprise_pct.toFixed(1)}%
+                  </Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {e.recent_dividends.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Dividends</Text>
+          {e.recent_dividends.map((d, i) => (
+            <View key={i} style={styles.retRow}>
+              <Text style={styles.mono}>{d.date}</Text>
+              <Text style={styles.mono}>
+                ${d.dividend?.toFixed(2) ?? "--"}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {e.recent_splits.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Stock Splits</Text>
+          {e.recent_splits.map((s, i) => (
+            <View key={i} style={styles.retRow}>
+              <Text style={styles.mono}>{s.date}</Text>
+              <Text style={styles.mono}>{s.ratio ?? "--"}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Earnings Call Summaries</Text>
+        {transcriptsQ.isLoading ? (
+          <ActivityIndicator color={colors.primary} />
+        ) : quarters.length === 0 ? (
+          <Text style={styles.muted}>
+            No transcripts available (needs FMP Starter).
+          </Text>
+        ) : (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {quarters.slice(0, 12).map((q) => (
+              <Pressable
+                key={`${q.year}-${q.quarter}`}
+                onPress={() => setOpenQuarter(q)}
+                style={styles.quarterBtn}
+              >
+                <Text style={styles.quarterBtnText}>
+                  Q{q.quarter} {q.year}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+
+      <TranscriptSheet
+        symbol={symbol}
+        quarter={openQuarter}
+        onClose={() => setOpenQuarter(null)}
+      />
+    </View>
+  );
+}
+
+function TranscriptSheet({
+  symbol,
+  quarter,
+  onClose,
+}: {
+  symbol: string;
+  quarter: TranscriptQuarter | null;
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    enabled: quarter !== null,
+    queryKey: [
+      "transcript",
+      symbol,
+      quarter?.year,
+      quarter?.quarter,
+    ],
+    queryFn: () => api.transcript(symbol, quarter!.year, quarter!.quarter),
+  });
+  return (
+    <Modal
+      visible={quarter !== null}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.sheetBackdrop} edges={["top", "bottom"]}>
+        <View style={styles.sheet}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>
+              {symbol} · Q{quarter?.quarter} {quarter?.year}
+            </Text>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <Text style={{ color: colors.primary, fontSize: 16 }}>Done</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+            {q.isLoading && <Loading />}
+            {q.data?.error && (
+              <Text style={{ color: colors.amber }}>{q.data.error}</Text>
+            )}
+            {q.data?.markdown && (
+              <Text style={styles.agentBody}>{q.data.markdown}</Text>
+            )}
+            {q.data?.transcript_truncated && (
+              <Text style={[styles.muted, { marginTop: spacing.md }]}>
+                Transcript was truncated to fit token limits.
+              </Text>
+            )}
+          </ScrollView>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+/* --- Insider tab --- */
+
+function InsiderSection({ symbol }: { symbol: string }) {
+  const q = useQuery({
+    queryKey: ["insider", symbol],
+    queryFn: () => api.insiderTrades(symbol),
+  });
+  if (q.isLoading) return <Loading />;
+  const trades = q.data?.trades ?? [];
+  if (trades.length === 0) {
+    return (
+      <ErrorCard message="No insider trades reported for this symbol." />
+    );
+  }
+
+  // Aggregate: buys vs sells in last 90 days
+  const now = new Date();
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  let buyValue = 0;
+  let sellValue = 0;
+  for (const t of trades) {
+    const d = new Date(t.filing_date);
+    if (d < ninetyDaysAgo) continue;
+    const isBuy = /purchase|buy|acquisition/i.test(
+      `${t.transaction_type} ${t.acquired_disposed}`,
+    );
+    if (isBuy) buyValue += t.value;
+    else sellValue += t.value;
+  }
+  const net = buyValue - sellValue;
+  const netColor =
+    net > 0 ? colors.bullish : net < 0 ? colors.bearish : colors.textMuted;
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Last 90 Days</Text>
+        <View style={styles.retRow}>
+          <Text style={styles.muted}>Buys</Text>
+          <Text style={[styles.mono, { color: colors.bullish }]}>
+            {fmtMoney(buyValue)}
+          </Text>
+        </View>
+        <View style={styles.retRow}>
+          <Text style={styles.muted}>Sells</Text>
+          <Text style={[styles.mono, { color: colors.bearish }]}>
+            {fmtMoney(sellValue)}
+          </Text>
+        </View>
+        <View style={styles.retRow}>
+          <Text style={styles.muted}>Net</Text>
+          <Text style={[styles.mono, { color: netColor, fontWeight: "700" }]}>
+            {net >= 0 ? "+" : ""}
+            {fmtMoney(Math.abs(net))}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Recent Filings</Text>
+        {trades.slice(0, 20).map((t, i) => (
+          <InsiderRow key={i} trade={t} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function InsiderRow({ trade }: { trade: InsiderTrade }) {
+  const isBuy = /purchase|buy|acquisition/i.test(
+    `${trade.transaction_type} ${trade.acquired_disposed}`,
+  );
+  const color = isBuy ? colors.bullish : colors.bearish;
+  const openLink = () => {
+    if (trade.link) Linking.openURL(trade.link).catch(() => {});
+  };
+  return (
+    <Pressable
+      onPress={openLink}
+      style={{
+        paddingVertical: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.borderSubtle,
+      }}
+    >
+      <View style={styles.row}>
+        <Text style={[styles.mono, { color }]}>
+          {isBuy ? "BUY" : "SELL"}
+        </Text>
+        <Text style={styles.muted}>{trade.filing_date}</Text>
+      </View>
+      <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>
+        {trade.reporter_name || trade.reporter_title || "Insider"}
+      </Text>
+      <View style={[styles.row, { marginTop: 2 }]}>
+        <Text style={styles.muted}>
+          {trade.shares.toLocaleString()} sh @ ${trade.price?.toFixed(2)}
+        </Text>
+        <Text style={[styles.mono, { color }]}>{fmtMoney(trade.value)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 /* --- Shared small UI --- */
 
 function Loading() {
@@ -1226,6 +1951,21 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   agentBtnText: { color: colors.text, fontSize: 12, fontWeight: "600" },
+
+  quarterBtn: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  quarterBtnText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
 
   sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
   sheet: {

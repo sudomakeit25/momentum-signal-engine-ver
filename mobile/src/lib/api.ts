@@ -64,6 +64,79 @@ export const api = {
 
   agent: (symbol: string, topic: string) =>
     request<AgentResponse>(`/instrument/${symbol}/agent/${topic}`),
+
+  // --- Stage 1: Instrument tab endpoints ---
+  events: (symbol: string) =>
+    request<EventsResponse>(`/instrument/${symbol}/events`),
+
+  insiderTrades: (symbol: string) =>
+    request<InsiderTradesResponse>(`/instrument/${symbol}/insider-trades`),
+
+  transcripts: (symbol: string) =>
+    request<TranscriptsResponse>(`/instrument/${symbol}/transcripts`),
+
+  transcript: (symbol: string, year: number, quarter: number) =>
+    request<TranscriptSummary>(
+      `/instrument/${symbol}/transcript/${year}/${quarter}`,
+    ),
+
+  multiTf: (symbol: string) =>
+    request<MultiTFResponse>(`/multi-tf/${symbol}`),
+
+  fibonacci: (symbol: string) =>
+    request<FibonacciResponse>(`/analysis/fibonacci/${symbol}`),
+
+  ichimoku: (symbol: string) =>
+    request<IchimokuResponse>(`/analysis/ichimoku/${symbol}`),
+
+  volumeProfile: (symbol: string) =>
+    request<VolumeProfileResponse>(`/analysis/volume-profile/${symbol}`),
+
+  shareSignal: (params: {
+    symbol: string;
+    action: string;
+    entry: number;
+    target: number;
+    stop_loss: number;
+    setup_type?: string;
+    confidence?: number;
+  }) => request<ShareSignalResponse>("/share/signal", params, "POST"),
+
+  // --- Stage 2: Market-wide endpoints ---
+  breadth: () => request<BreadthResponse>("/breadth"),
+  regime: () => request<RegimeResponse>("/market/regime"),
+  sectorFlow: () => request<SectorFlow[]>("/sectors/flow"),
+  topSignals: (top = 20) => request<SignalSummary[]>("/signals", { top }),
+  darkPoolScan: (top = 10) =>
+    request<DarkPoolScanRow[]>("/dark-pool/scan", { top }),
+  optionsFlowScan: (top = 10) =>
+    request<OptionsFlowScanRow[]>("/options-flow/scan", { top }),
+  ipoCalendar: () => request<IpoCalendarResponse>("/market/ipos"),
+
+  // --- Stage 3: Utility endpoints ---
+  alertsHistory: (limit = 100, enrich = false) =>
+    request<AlertHistoryItem[]>("/alerts/history", { limit, enrich }),
+  journalTrades: () => request<JournalTrade[]>("/journal/trades"),
+  journalStats: () => request<JournalStats>("/journal/stats"),
+  addTrade: (params: {
+    symbol: string;
+    side?: string;
+    shares: number;
+    entry_price: number;
+    stop_loss?: number;
+    target?: number;
+    setup_type?: string;
+    notes?: string;
+  }) =>
+    request<{ status: string }>("/journal/trades", params, "POST"),
+  closeTrade: (tradeId: string, exit_price: number) =>
+    request<{ status: string; pnl: number }>(
+      `/journal/trades/${tradeId}/close`,
+      { exit_price },
+      "POST",
+    ),
+  communityFeed: (limit = 50, symbol?: string) =>
+    request<CommunityPost[]>("/community/feed", { limit, symbol }),
 };
 
 export type SignalSummary = {
@@ -237,4 +310,298 @@ export type AgentResponse = {
   usage?: { input_tokens: number; output_tokens: number };
   model?: string;
   error?: string;
+};
+
+// --- Events ---
+export type UpcomingEarnings = {
+  date: string;
+  eps_estimated: number | null;
+  revenue_estimated: number | null;
+};
+export type RecentEarnings = {
+  date: string;
+  eps: number | null;
+  eps_estimated: number | null;
+  revenue: number | null;
+  surprise_pct: number | null;
+};
+export type RecentDividend = {
+  date: string;
+  dividend: number | null;
+  record_date: string | null;
+  payment_date: string | null;
+};
+export type RecentSplit = {
+  date: string;
+  ratio: string | null;
+  numerator: number | null;
+  denominator: number | null;
+};
+export type EventsResponse = {
+  symbol: string;
+  next_earnings: UpcomingEarnings | null;
+  recent_earnings: RecentEarnings[];
+  recent_dividends: RecentDividend[];
+  recent_splits: RecentSplit[];
+};
+
+// --- Insider trades ---
+export type InsiderTrade = {
+  filing_date: string;
+  transaction_date: string;
+  reporter_name: string;
+  reporter_title: string;
+  transaction_type: string;
+  shares: number;
+  price: number;
+  value: number;
+  acquired_disposed: string;
+  link: string;
+};
+export type InsiderTradesResponse = {
+  symbol: string;
+  count: number;
+  trades: InsiderTrade[];
+};
+
+// --- Transcripts ---
+export type TranscriptQuarter = {
+  year: number;
+  quarter: number;
+  date?: string;
+};
+export type TranscriptsResponse = {
+  symbol: string;
+  quarters: TranscriptQuarter[];
+};
+export type TranscriptSummary = {
+  symbol?: string;
+  quarter?: number;
+  year?: number;
+  call_date?: string;
+  markdown?: string;
+  transcript_truncated?: boolean;
+  error?: string;
+  configure_hint?: string;
+};
+
+// --- Multi-TF ---
+export type TfResult = {
+  label: string;
+  trend: string;
+  price?: number;
+  ema9?: number;
+  ema21?: number;
+  rsi?: number;
+  high_20?: number;
+  low_20?: number;
+  signals?: Array<{
+    action: string;
+    setup_type: string;
+    entry: number;
+    target: number;
+    stop_loss: number;
+    confidence: number;
+    reason: string;
+  }>;
+  signal_count?: number;
+  bars?: number;
+  summary: string;
+};
+export type MultiTFResponse = {
+  symbol: string;
+  timeframes: Record<string, TfResult>;
+  alignment?: string;
+  alignment_strength?: number;
+  recommendation?: {
+    bias?: string;
+    confidence?: number;
+    notes?: string[];
+  };
+};
+
+// --- Fibonacci / Ichimoku / Volume profile ---
+export type FibonacciResponse = {
+  symbol: string;
+  trend?: string;
+  high?: number;
+  low?: number;
+  current?: number;
+  levels?: Record<string, number>;
+  nearest_level?: string;
+  nearest_price?: number;
+  error?: string;
+};
+
+export type IchimokuResponse = {
+  symbol: string;
+  current?: number;
+  tenkan?: number;
+  kijun?: number;
+  senkou_a?: number | null;
+  senkou_b?: number | null;
+  cloud_top?: number;
+  cloud_bottom?: number;
+  signal?: string;
+  tk_cross?: string;
+  error?: string;
+};
+
+export type VolumeProfileBin = {
+  price_low: number;
+  price_high: number;
+  price_mid: number;
+  volume: number;
+};
+export type VolumeProfileResponse = {
+  symbol: string;
+  current?: number;
+  poc?: number;
+  value_area_high?: number;
+  value_area_low?: number;
+  profile?: VolumeProfileBin[];
+  error?: string;
+};
+
+// --- Share ---
+export type ShareSignalResponse = {
+  share_id?: string;
+  url?: string;
+  error?: string;
+};
+
+// --- Breadth / regime / sectors ---
+export type BreadthResponse = {
+  total: number;
+  bullish: number;
+  bearish: number;
+  neutral: number;
+  above_ema21: number;
+  bullish_pct: number;
+  above_ema21_pct: number;
+};
+
+export type RegimeResponse = {
+  regime: string;
+  description?: string;
+  confidence_adjustment?: number;
+  components?: Record<string, number | string>;
+  recommendation?: {
+    bias: string;
+    position_size: string;
+    stop_width: string;
+  };
+  spy_price?: number;
+  spy_change_20d?: number;
+};
+
+export type SectorFlow = {
+  sector: string;
+  symbols: number;
+  dp_accumulating: number;
+  dp_distributing: number;
+  of_bullish: number;
+  of_bearish: number;
+  of_unusual_count: number;
+  momentum_count: number;
+  avg_momentum_score: number;
+  flow_direction: string;
+  flow_strength: number;
+};
+
+// --- Dark pool / options flow scans ---
+export type DarkPoolScanRow = {
+  symbol: string;
+  avg_short_pct: number;
+  recent_short_pct: number;
+  trend: string;
+  trend_strength: number;
+  price_change_pct: number;
+  alert_reasons: string[];
+};
+export type OptionsFlowScanRow = {
+  symbol: string;
+  put_call_ratio: number;
+  total_call_volume: number;
+  total_put_volume: number;
+  flow_sentiment: string;
+  alert_reasons: string[];
+};
+
+// --- IPOs ---
+export type IpoEntry = {
+  symbol: string;
+  company: string;
+  date: string;
+  price_range?: string;
+  shares?: number;
+  exchange?: string;
+};
+export type IpoCalendarResponse = {
+  upcoming: IpoEntry[];
+  recent: IpoEntry[];
+};
+
+// --- Alerts history ---
+export type AlertHistoryItem = {
+  symbol: string;
+  action: string;
+  setup_type: string;
+  entry: number;
+  target?: number;
+  stop_loss?: number;
+  confidence?: number;
+  dispatched_at?: string;
+  channel?: string;
+  current_price?: number | null;
+  pnl_pct?: number | null;
+  pnl_direction?: string | null;
+};
+
+// --- Journal ---
+export type JournalTrade = {
+  id?: string;
+  symbol: string;
+  side: string;
+  shares: number;
+  entry_price: number;
+  exit_price: number | null;
+  stop_loss: number | null;
+  target: number | null;
+  status: string;
+  setup_type: string;
+  notes: string;
+  entry_date: string;
+  exit_date: string | null;
+  pnl: number | null;
+  r_multiple: number | null;
+};
+export type JournalStats = {
+  total_trades?: number;
+  open_trades?: number;
+  closed_trades?: number;
+  winners?: number;
+  losers?: number;
+  win_rate?: number;
+  avg_r?: number;
+  total_pnl?: number;
+};
+
+// --- Community ---
+export type CommunityComment = {
+  user_id: string;
+  user_name: string;
+  content: string;
+  created_at: string;
+};
+export type CommunityPost = {
+  id: string;
+  user_id: string;
+  user_name: string;
+  content: string;
+  symbol: string;
+  trade_data: Record<string, unknown> | null;
+  created_at: string;
+  likes: number;
+  comments: CommunityComment[];
 };

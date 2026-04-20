@@ -60,6 +60,10 @@ export default function RootLayout() {
             name="instrument/[symbol]"
             options={{ title: "Instrument" }}
           />
+          <Stack.Screen name="alerts" options={{ title: "Alerts" }} />
+          <Stack.Screen name="journal" options={{ title: "Journal" }} />
+          <Stack.Screen name="comparison" options={{ title: "Compare" }} />
+          <Stack.Screen name="community" options={{ title: "Community" }} />
         </Stack>
       </SafeAreaProvider>
     </QueryClientProvider>

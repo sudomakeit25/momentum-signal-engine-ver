@@ -123,12 +123,15 @@ describe("InstrumentScreen", () => {
     );
   });
 
-  it("renders the 5 section tabs", () => {
+  it("renders the section tabs", () => {
     const { getByText } = renderWithProviders(<InstrumentScreen />);
     for (const label of [
       "Overview",
       "Indicators",
+      "Pattern",
       "Seasonality",
+      "Earnings",
+      "Insider",
       "Fundamentals",
       "News",
     ]) {

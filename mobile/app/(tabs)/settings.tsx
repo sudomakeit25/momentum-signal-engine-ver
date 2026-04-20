@@ -1,4 +1,5 @@
 import { Linking, ScrollView, StyleSheet, Text, View, Pressable, Alert } from "react-native";
+import { Link } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Constants from "expo-constants";
 import { API_BASE } from "../../src/lib/api";
@@ -46,6 +47,34 @@ export default function SettingsScreen() {
             {API_BASE.replace(/^https?:\/\//, "")}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>TOOLS</Text>
+        <Link href="/alerts" asChild>
+          <Pressable style={styles.linkRow}>
+            <Text style={styles.link}>Alerts history</Text>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        </Link>
+        <Link href="/journal" asChild>
+          <Pressable style={styles.linkRow}>
+            <Text style={styles.link}>Trading journal</Text>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        </Link>
+        <Link href="/comparison" asChild>
+          <Pressable style={styles.linkRow}>
+            <Text style={styles.link}>Compare symbols</Text>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        </Link>
+        <Link href="/community" asChild>
+          <Pressable style={styles.linkRow}>
+            <Text style={styles.link}>Community feed</Text>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        </Link>
       </View>
 
       <View style={styles.section}>
