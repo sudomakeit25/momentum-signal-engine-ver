@@ -1,4 +1,4 @@
-import { Linking, StyleSheet, Text, View, Pressable, Alert } from "react-native";
+import { Linking, ScrollView, StyleSheet, Text, View, Pressable, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Constants from "expo-constants";
 import { API_BASE } from "../../src/lib/api";
@@ -30,6 +30,10 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>ABOUT</Text>
         <View style={styles.row}>
@@ -89,6 +93,7 @@ export default function SettingsScreen() {
           physical device — the simulator is rejected by Apple.
         </Text>
       </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -116,7 +121,8 @@ function labelForPush(status: string): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg, padding: spacing.lg },
+  container: { flex: 1, backgroundColor: colors.bg },
+  scrollContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
   section: {
     backgroundColor: colors.bgElevated,
     borderRadius: radius.md,
