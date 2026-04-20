@@ -16,6 +16,7 @@ _WATCHLIST_KEY = "mse:watchlist"
 _LEADERBOARD_KEY = "mse:leaderboard"
 _SEEN_SIGNALS_KEY = "mse:seen_signals"  # daily-rolled set of dispatched keys
 _SEEN_SIGNALS_DATE_KEY = "mse:seen_signals_date"
+_PUSH_TOKENS_KEY = "mse:push_tokens"  # { expo_token: {added_at, platform} }
 
 
 def _get_redis():
@@ -281,4 +282,58 @@ def save_seen_signals(keys: set[str], date_str: str) -> bool:
         return True
     except Exception as e:
         logger.warning("Failed to save seen signals: %s", e)
+        return False
+
+
+# --- Expo push tokens (mobile app) ---
+
+def get_push_tokens() -> dict[str, dict]:
+    """Return a dict mapping Expo token -> metadata ({added_at, platform})."""
+    redis = _get_redis()
+    if not redis:
+        return {}
+    try:
+        raw = redis.get(_PUSH_TOKENS_KEY)
+        if not raw:
+            return {}
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning("Failed to load push tokens: %s", e)
+        return {}
+
+
+def add_push_token(token: str, platform: str = "unknown") -> bool:
+    """Register (or refresh) an Expo push token."""
+    if not token or not token.startswith("ExponentPushToken"):
+        return False
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        tokens = get_push_tokens()
+        tokens[token] = {
+            "added_at": datetime.now().isoformat(),
+            "platform": platform,
+        }
+        redis.set(_PUSH_TOKENS_KEY, json.dumps(tokens))
+        return True
+    except Exception as e:
+        logger.warning("Failed to add push token: %s", e)
+        return False
+
+
+def remove_push_token(token: str) -> bool:
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        tokens = get_push_tokens()
+        if token in tokens:
+            del tokens[token]
+            redis.set(_PUSH_TOKENS_KEY, json.dumps(tokens))
+            return True
+        return False
+    except Exception as e:
+        logger.warning("Failed to remove push token: %s", e)
         return False

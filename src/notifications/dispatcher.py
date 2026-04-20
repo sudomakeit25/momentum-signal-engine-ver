@@ -78,6 +78,74 @@ def _record_sms_fingerprint(fingerprint: str) -> None:
 def _fingerprint_of_body(body: str) -> str:
     return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()[:16]
 
+
+_EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+
+def send_expo_push(tokens: list[str], signals: list) -> bool:
+    """Send a push notification to each Expo push token via the Expo push API.
+
+    No Apple/Google credentials required — Expo's service brokers to APNs
+    and FCM on our behalf. Returns True if ANY token was delivered to
+    the Expo service (individual delivery statuses are async and logged).
+    """
+    if not tokens or not signals:
+        return False
+
+    deduped = _deduped_signals_for_sms(signals)
+    deduped.sort(key=lambda s: getattr(s, "confidence", 0), reverse=True)
+    top = deduped[:5]
+    title = "MSE Signal Alert" if len(deduped) == 1 else f"MSE: {len(deduped)} new signals"
+    body_lines = []
+    for s in top:
+        arrow = "+" if s.action.value == "BUY" else "-"
+        body_lines.append(
+            f"{arrow}{s.symbol} {s.action.value} ${s.entry:.2f}"
+            f" ({s.confidence*100:.0f}%)"
+        )
+    body = "\n".join(body_lines)
+
+    # Fingerprint suppression — same 30-min window as SMS.
+    fp = _fingerprint_of_body(f"push:{body}")
+    recent = _recent_sms_fingerprints()
+    if fp in recent:
+        logger.info("Expo push suppressed (duplicate body sent %s)", recent[fp])
+        return False
+
+    # Expo accepts a batched payload up to 100 messages.
+    messages = [
+        {
+            "to": t,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "data": {
+                "type": "signal_alert",
+                # Deep link into the instrument page of the top-scoring signal
+                "url": f"mse://instrument/{deduped[0].symbol}" if deduped else "",
+            },
+        }
+        for t in tokens
+    ]
+
+    try:
+        resp = http_requests.post(
+            _EXPO_PUSH_URL,
+            json=messages,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=10,
+        )
+        ok = 200 <= resp.status_code < 300
+        if ok:
+            _record_sms_fingerprint(fp)
+            logger.info("Expo push sent to %d tokens (%d chars)", len(tokens), len(body))
+        else:
+            logger.warning("Expo push failed: HTTP %d: %s", resp.status_code, resp.text[:200])
+        return ok
+    except Exception as e:
+        logger.warning("Expo push error: %s", e)
+        return False
+
 # File-based fallback for local dev
 _CONFIG_PATH = Path(".notification_config.json")
 _config_lock = threading.Lock()
@@ -358,7 +426,7 @@ def send_sms(to_phone: str, signals: list) -> bool:
 def dispatch_alerts(signals: list) -> dict:
     """Send alerts through all enabled channels. Returns status per channel."""
     config = load_config()
-    results = {"webhook": False, "sms": False}
+    results = {"webhook": False, "sms": False, "push": False}
 
     logger.info(
         "dispatch_alerts called: %d signals, auto_enabled=%s, sms_to=%s, sms_consent=%s, sms_method=%s, sms_carrier=%s, webhook_url=%s",
@@ -390,6 +458,19 @@ def dispatch_alerts(signals: list) -> dict:
         logger.info("SMS skipped: consent not given")
     elif not config.sms_to:
         logger.info("SMS skipped: no phone number configured")
+
+    # Mobile push notifications (Expo). Any tokens registered from the
+    # mobile app get a silent-friendly push instead of (or in addition
+    # to) SMS.
+    try:
+        from src.data.redis_store import get_push_tokens
+        tokens = list(get_push_tokens().keys())
+        if tokens:
+            results["push"] = send_expo_push(tokens, filtered)
+        else:
+            logger.info("Push skipped: no Expo tokens registered")
+    except Exception as e:
+        logger.debug("Expo push dispatch failed: %s", e)
 
     # Log alerts to history
     try:

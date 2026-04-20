@@ -34,6 +34,70 @@ def health_check():
     return {"status": "ok", "service": "momentum-signal-engine"}
 
 
+# --- Mobile push token registration ---
+
+@router.post("/mobile/register-token")
+def mobile_register_token(
+    token: str = Query(..., description="Expo push token (ExponentPushToken[...])"),
+    platform: str = Query(default="unknown", description="ios | android | web"),
+):
+    """Register or refresh an Expo push token for the mobile app.
+
+    Called by the mobile client on launch (and whenever the token changes).
+    Tokens are stored in Redis; the dispatch loop reads them and sends
+    alerts to every registered device.
+    """
+    from src.data.redis_store import add_push_token
+    if not token.startswith("ExponentPushToken"):
+        return {"status": "error", "message": "Not a valid Expo push token"}
+    ok = add_push_token(token, platform)
+    return {"status": "registered" if ok else "error"}
+
+
+@router.post("/mobile/unregister-token")
+def mobile_unregister_token(
+    token: str = Query(..., description="Expo push token to remove"),
+):
+    from src.data.redis_store import remove_push_token
+    ok = remove_push_token(token)
+    return {"status": "removed" if ok else "not_found"}
+
+
+@router.get("/mobile/token-count")
+def mobile_token_count():
+    """Quick diagnostic — how many devices are registered."""
+    from src.data.redis_store import get_push_tokens
+    tokens = get_push_tokens()
+    return {"count": len(tokens)}
+
+
+@router.post("/mobile/test-push")
+def mobile_test_push():
+    """Send a test push to every registered device (for debugging)."""
+    from src.data.redis_store import get_push_tokens
+    from src.notifications.dispatcher import send_expo_push
+
+    # Fabricate one signal-like object so we can reuse send_expo_push.
+    class _Stub:
+        class _A:
+            value = "BUY"
+        class _ST:
+            value = "test"
+        symbol = "TEST"
+        action = _A()
+        setup_type = _ST()
+        entry = 100.0
+        confidence = 0.99
+        reason = "Test push"
+        rr_ratio = 2.0
+
+    tokens = list(get_push_tokens().keys())
+    if not tokens:
+        return {"status": "no_tokens"}
+    ok = send_expo_push(tokens, [_Stub()])
+    return {"status": "sent" if ok else "error", "token_count": len(tokens)}
+
+
 @router.get("/scan", response_model=list[ScanResult])
 def scan(
     top: int = Query(default=20, ge=1, le=100, description="Number of top results"),
