@@ -15,6 +15,7 @@ import {
   AnalyzerResponse,
   FundamentalsResponse,
   NewsResponse,
+  SeasonalityHeatmapRow,
   SeasonalityResponse,
   TrendsResponse,
 } from "../../src/lib/api";
@@ -194,47 +195,196 @@ function RetRow({ label, value }: { label: string; value: number | null | undefi
 
 /* --- Seasonality --- */
 
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+const SAMPLE_OPTIONS: (number | "all")[] = [5, 10, 15, 20, 25, "all"];
+
+type Aggregate = {
+  label: string;
+  avg_pct: number | null;
+  win_rate: number | null;
+};
+
 function SeasonalitySection({ symbol }: { symbol: string }) {
   const q = useQuery({
     queryKey: ["seasonality", symbol],
     queryFn: () => api.seasonality(symbol),
   });
+  const [sampleSize, setSampleSize] = useState<number | "all">(10);
+
   if (q.isLoading) return <Loading />;
   const d = q.data;
   if (!d || d.error) return <ErrorCard message={d?.error ?? "no data"} />;
-  const months = d.months ?? [];
+
+  const fullHeatmap = (d.heatmap ?? [])
+    .slice()
+    .sort((a, b) => b.year - a.year);
+  const rows =
+    sampleSize === "all" ? fullHeatmap : fullHeatmap.slice(0, sampleSize as number);
+
+  const aggregates: Aggregate[] = MONTH_LABELS.map((label) => {
+    const values: number[] = [];
+    for (const row of rows) {
+      const v = row[label];
+      if (typeof v === "number") values.push(v);
+    }
+    if (!values.length) return { label, avg_pct: null, win_rate: null };
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const wins = values.filter((v) => v > 0).length;
+    return { label, avg_pct: avg, win_rate: (wins / values.length) * 100 };
+  });
+
   return (
     <View style={{ gap: spacing.md }}>
       <Text style={styles.muted}>
-        Based on {d.years_covered ?? 0} years of history.
+        {fullHeatmap.length} years of history · showing {rows.length}
       </Text>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Average Return by Month</Text>
-        {months.map((m) => {
-          const v = m.avg_pct;
-          const positive = (v ?? 0) >= 0;
+
+      <View style={styles.sampleBar}>
+        {SAMPLE_OPTIONS.map((opt) => {
+          const active = sampleSize === opt;
           return (
-            <View key={m.month} style={styles.retRow}>
-              <Text style={styles.mono}>{m.label}</Text>
-              <View style={{ flexDirection: "row", gap: spacing.md }}>
-                <Text style={styles.muted}>
-                  win {m.win_rate !== null ? m.win_rate.toFixed(0) : "-"}%
-                </Text>
-                <Text
-                  style={[
-                    styles.mono,
-                    { color: v === null ? colors.textDim : positive ? colors.bullish : colors.bearish },
-                  ]}
-                >
-                  {v === null
-                    ? "--"
-                    : `${positive ? "+" : ""}${v.toFixed(2)}%`}
-                </Text>
-              </View>
-            </View>
+            <Pressable
+              key={String(opt)}
+              onPress={() => setSampleSize(opt)}
+              style={[styles.sampleBtn, active && styles.sampleBtnActive]}
+            >
+              <Text
+                style={[
+                  styles.sampleBtnText,
+                  active && styles.sampleBtnTextActive,
+                ]}
+              >
+                {opt === "all" ? "All" : opt}
+              </Text>
+            </Pressable>
           );
         })}
       </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator
+        style={styles.seasonTableWrap}
+      >
+        <View>
+          {/* Header row */}
+          <View style={[styles.sRow, styles.sHeaderRow]}>
+            <View style={[styles.sCellYear, styles.sHeaderCell]}>
+              <Text style={styles.sHeaderText}>Year</Text>
+            </View>
+            {MONTH_LABELS.map((m) => (
+              <View key={m} style={[styles.sCell, styles.sHeaderCell]}>
+                <Text style={styles.sHeaderText}>{m}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Probability % row */}
+          <View style={[styles.sRow, styles.sAggRow]}>
+            <View style={styles.sCellYear}>
+              <Text style={styles.sAggLabel}>Probability %</Text>
+            </View>
+            {aggregates.map((m) => (
+              <View
+                key={m.label}
+                style={[
+                  styles.sCell,
+                  { backgroundColor: probabilityCellBg(m.win_rate) },
+                ]}
+              >
+                {m.win_rate !== null ? (
+                  <Text
+                    style={[
+                      styles.sCellText,
+                      {
+                        color:
+                          m.win_rate >= 50 ? colors.bullish : colors.bearish,
+                      },
+                    ]}
+                  >
+                    {m.win_rate >= 50 ? "▲" : "▼"} {m.win_rate.toFixed(0)}%
+                  </Text>
+                ) : (
+                  <Text style={styles.sCellDim}>--</Text>
+                )}
+              </View>
+            ))}
+          </View>
+
+          {/* Average return % row */}
+          <View style={[styles.sRow, styles.sAggRow, styles.sAggRowBorder]}>
+            <View style={styles.sCellYear}>
+              <Text style={styles.sAggLabel}>Avg return %</Text>
+            </View>
+            {aggregates.map((m) => (
+              <View
+                key={m.label}
+                style={[
+                  styles.sCell,
+                  { backgroundColor: heatCellBg(m.avg_pct) },
+                ]}
+              >
+                {m.avg_pct !== null ? (
+                  <Text
+                    style={[
+                      styles.sCellText,
+                      {
+                        color:
+                          m.avg_pct >= 0 ? colors.bullish : colors.bearish,
+                      },
+                    ]}
+                  >
+                    {m.avg_pct > 0 ? "+" : ""}
+                    {m.avg_pct.toFixed(2)}%
+                  </Text>
+                ) : (
+                  <Text style={styles.sCellDim}>--</Text>
+                )}
+              </View>
+            ))}
+          </View>
+
+          {/* Per-year rows */}
+          {rows.map((row) => (
+            <View key={row.year} style={styles.sRow}>
+              <View style={styles.sCellYear}>
+                <Text style={styles.sYearText}>{row.year}</Text>
+              </View>
+              {MONTH_LABELS.map((m) => {
+                const v = row[m];
+                return (
+                  <View
+                    key={m}
+                    style={[styles.sCell, { backgroundColor: heatCellBg(v) }]}
+                  >
+                    {typeof v === "number" ? (
+                      <Text
+                        style={[
+                          styles.sCellText,
+                          {
+                            color:
+                              v >= 0 ? colors.bullish : colors.bearish,
+                          },
+                        ]}
+                      >
+                        {v > 0 ? "+" : ""}
+                        {v.toFixed(2)}%
+                      </Text>
+                    ) : (
+                      <Text style={styles.sCellDim}>--</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+
       {d.best_month && (
         <Text style={styles.muted}>
           Best: {d.best_month.label} · Worst: {d.worst_month?.label ?? "-"}
@@ -242,6 +392,23 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
       )}
     </View>
   );
+}
+
+function probabilityCellBg(v: number | null): string {
+  if (v === null) return "transparent";
+  if (v >= 50) {
+    const strength = Math.min(1, (v - 50) / 50);
+    return `rgba(52, 211, 153, ${0.12 + strength * 0.4})`;
+  }
+  const strength = Math.min(1, (50 - v) / 50);
+  return `rgba(248, 113, 113, ${0.12 + strength * 0.4})`;
+}
+
+function heatCellBg(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "transparent";
+  const clamped = Math.max(-10, Math.min(10, v)) / 10;
+  if (clamped > 0) return `rgba(52, 211, 153, ${0.15 + clamped * 0.5})`;
+  return `rgba(248, 113, 113, ${0.15 - clamped * 0.5})`;
 }
 
 /* --- Fundamentals --- */
@@ -442,4 +609,68 @@ const styles = StyleSheet.create({
   },
   newsTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   newsMeta: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+
+  sampleBar: {
+    flexDirection: "row",
+    alignSelf: "flex-start",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  sampleBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: colors.bgElevated,
+  },
+  sampleBtnActive: { backgroundColor: colors.primaryDark },
+  sampleBtnText: { color: colors.textMuted, fontSize: 12 },
+  sampleBtnTextActive: { color: "#000", fontWeight: "700" },
+
+  seasonTableWrap: {
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    borderRadius: radius.md,
+    backgroundColor: colors.bgElevated,
+  },
+  sRow: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSubtle,
+  },
+  sHeaderRow: { backgroundColor: colors.bgCard },
+  sHeaderCell: { paddingVertical: 6 },
+  sHeaderText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textAlign: "center",
+  },
+  sAggRow: { backgroundColor: "rgba(39,39,42,0.6)" },
+  sAggRowBorder: { borderBottomColor: colors.border, borderBottomWidth: 1 },
+  sAggLabel: {
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  sCellYear: {
+    width: 74,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    justifyContent: "center",
+  },
+  sCell: {
+    width: 64,
+    paddingVertical: 6,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sCellText: {
+    fontSize: 10,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "600",
+  },
+  sCellDim: { color: colors.textDim, fontSize: 10 },
+  sYearText: { color: colors.textMuted, fontSize: 11, fontWeight: "600" },
 });

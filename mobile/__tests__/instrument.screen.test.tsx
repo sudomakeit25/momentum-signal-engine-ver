@@ -24,13 +24,17 @@ const TRENDS = {
 
 const SEASONALITY = {
   symbol: "NVDA",
-  years_covered: 10,
+  years_covered: 2,
   months: [
-    { month: 1, label: "Jan", avg_pct: 5.2, win_rate: 70, sample_size: 10 },
-    { month: 7, label: "Jul", avg_pct: 8.1, win_rate: 80, sample_size: 10 },
+    { month: 1, label: "Jan", avg_pct: 5.2, win_rate: 70, sample_size: 2 },
+    { month: 7, label: "Jul", avg_pct: 8.1, win_rate: 80, sample_size: 2 },
   ],
-  best_month: { month: 7, label: "Jul", avg_pct: 8.1, win_rate: 80, sample_size: 10 },
-  worst_month: { month: 1, label: "Jan", avg_pct: -2.3, win_rate: 40, sample_size: 10 },
+  heatmap: [
+    { year: 2024, Jan: 5.2, Jul: 8.1 },
+    { year: 2023, Jan: -2.3, Jul: 4.0 },
+  ],
+  best_month: { month: 7, label: "Jul", avg_pct: 8.1, win_rate: 80, sample_size: 2 },
+  worst_month: { month: 1, label: "Jan", avg_pct: -2.3, win_rate: 40, sample_size: 2 },
 };
 
 const FUNDAMENTALS_EMPTY = {
@@ -89,12 +93,14 @@ describe("InstrumentScreen", () => {
     expect(await findByText(/Overbought RSI/i)).toBeTruthy();
   });
 
-  it("switching to Seasonality renders month rows", async () => {
+  it("switching to Seasonality renders the year-by-month table", async () => {
     const { findByText, getByText } = renderWithProviders(<InstrumentScreen />);
-    // Wait for Overview to load first
     await findByText("A");
     fireEvent.press(getByText("Seasonality"));
-    expect(await findByText(/Average Return by Month/i)).toBeTruthy();
+    expect(await findByText(/Probability %/i)).toBeTruthy();
+    expect(await findByText(/Avg return %/i)).toBeTruthy();
+    expect(await findByText("2024")).toBeTruthy();
+    expect(await findByText("2023")).toBeTruthy();
     expect(await findByText("Jul")).toBeTruthy();
     expect(await findByText("Jan")).toBeTruthy();
   });

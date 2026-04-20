@@ -119,10 +119,15 @@ export type SeasonalityMonth = {
   sample_size: number;
 };
 
+export type SeasonalityHeatmapRow = {
+  year: number;
+} & Record<string, number | undefined>;
+
 export type SeasonalityResponse = {
   symbol: string;
   years_covered?: number;
   months?: SeasonalityMonth[];
+  heatmap?: SeasonalityHeatmapRow[];
   best_month?: SeasonalityMonth;
   worst_month?: SeasonalityMonth;
   error?: string;
