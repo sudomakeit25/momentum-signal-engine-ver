@@ -25,6 +25,20 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logging.getLogger("mse.notifications").addHandler(_handler)
 
+# Stop our handler from propagating to root — otherwise basicConfig's root
+# handler prints each mse.* record a second time and every line appears
+# twice in Render logs.
+logger.propagate = False
+logging.getLogger("mse.notifications").propagate = False
+
+# Yahoo Finance blocks cloud IPs with anti-bot challenges ("Invalid Crumb",
+# "User is unable to access this feature"). The errors are harmless — the
+# Stock Screener page degrades gracefully — but they flood the log. Silence
+# them in production; locally these loggers stay at default.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("curl_cffi").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
+
 _REFRESH_INTERVAL = 600  # 10 min — dynamic universe is ~2k stocks, gives scan time to finish
 _stop_event = threading.Event()
 
