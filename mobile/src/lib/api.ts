@@ -47,6 +47,18 @@ export const api = {
   watchlist: () => request<string[]>("/watchlist/server"),
 };
 
+export type SignalSummary = {
+  symbol: string;
+  action: "BUY" | "SELL" | string;
+  setup_type: string;
+  entry: number;
+  target?: number;
+  stop_loss?: number;
+  confidence: number;
+  reason?: string;
+  rr_ratio?: number;
+};
+
 export type ScanRow = {
   symbol: string;
   price: number;
@@ -56,7 +68,7 @@ export type ScanRow = {
   relative_strength: number;
   score: number;
   setup_types: string[];
-  signals: unknown[];
+  signals: SignalSummary[];
 };
 
 export type AnalyzerResponse = {
