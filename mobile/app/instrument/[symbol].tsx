@@ -1,8 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Dimensions,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,19 +12,29 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Path, Line as SvgLine, Circle, Text as SvgText } from "react-native-svg";
 import {
   api,
-  AnalyzerResponse,
-  FundamentalsResponse,
-  NewsResponse,
+  AgentTopic,
+  ChartBar,
+  IndicatorsResponse,
   SeasonalityHeatmapRow,
-  SeasonalityResponse,
-  TrendsResponse,
 } from "../../src/lib/api";
 import { colors, radius, spacing } from "../../src/lib/theme";
 
-type Section = "Overview" | "Seasonality" | "Fundamentals" | "News";
-const SECTIONS: Section[] = ["Overview", "Seasonality", "Fundamentals", "News"];
+type Section =
+  | "Overview"
+  | "Indicators"
+  | "Seasonality"
+  | "Fundamentals"
+  | "News";
+const SECTIONS: Section[] = [
+  "Overview",
+  "Indicators",
+  "Seasonality",
+  "Fundamentals",
+  "News",
+];
 
 export default function InstrumentScreen() {
   const { symbol: rawSymbol } = useLocalSearchParams<{ symbol: string }>();
@@ -31,32 +43,105 @@ export default function InstrumentScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
-      <Stack.Screen options={{ title: symbol }} />
+      <Stack.Screen
+        options={{
+          title: symbol,
+          headerRight: () => <WatchlistStar symbol={symbol} />,
+        }}
+      />
 
-      <View style={styles.tabBar}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBarWrap}
+        contentContainerStyle={styles.tabBar}
+      >
         {SECTIONS.map((s) => (
           <Pressable
             key={s}
             onPress={() => setSection(s)}
             style={[styles.tab, section === s && styles.tabActive]}
           >
-            <Text style={[styles.tabText, section === s && styles.tabTextActive]}>
+            <Text
+              style={[styles.tabText, section === s && styles.tabTextActive]}
+            >
               {s}
             </Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxl }}
+        contentContainerStyle={{
+          padding: spacing.lg,
+          paddingBottom: spacing.xxl,
+        }}
       >
         {section === "Overview" && <OverviewSection symbol={symbol} />}
+        {section === "Indicators" && <IndicatorsSection symbol={symbol} />}
         {section === "Seasonality" && <SeasonalitySection symbol={symbol} />}
         {section === "Fundamentals" && <FundamentalsSection symbol={symbol} />}
         {section === "News" && <NewsSection symbol={symbol} />}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/* --- Watchlist star (header) --- */
+
+function WatchlistStar({ symbol }: { symbol: string }) {
+  const qc = useQueryClient();
+  const { data: list } = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: api.watchlist,
+  });
+  const safeList = Array.isArray(list) ? list : [];
+  const inList = safeList.includes(symbol);
+
+  const toggle = useMutation({
+    mutationFn: async () => {
+      const next = inList
+        ? safeList.filter((s) => s !== symbol)
+        : [...safeList, symbol];
+      await api.saveWatchlist(next);
+      return next;
+    },
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["watchlist"] });
+      const prev = qc.getQueryData<string[]>(["watchlist"]);
+      const prevSafe = Array.isArray(prev) ? prev : [];
+      qc.setQueryData<string[]>(
+        ["watchlist"],
+        inList
+          ? prevSafe.filter((s) => s !== symbol)
+          : [...prevSafe, symbol],
+      );
+      return { prev: prevSafe };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["watchlist"], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["watchlist"] });
+    },
+  });
+
+  return (
+    <Pressable
+      onPress={() => toggle.mutate()}
+      style={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}
+      hitSlop={10}
+    >
+      <Text
+        style={{
+          fontSize: 22,
+          color: inList ? colors.amber : colors.textDim,
+        }}
+      >
+        {inList ? "★" : "☆"}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -82,14 +167,14 @@ function OverviewSection({ symbol }: { symbol: string }) {
 
   return (
     <View style={{ gap: spacing.md }}>
+      <PriceChart symbol={symbol} />
+
       <View style={styles.card}>
         <View style={styles.row}>
           <View>
             <Text style={styles.muted}>Verdict</Text>
             <Text style={styles.big}>{a.grade}</Text>
-            <Text style={styles.verdict}>
-              {a.verdict.replace(/_/g, " ")}
-            </Text>
+            <Text style={styles.verdict}>{a.verdict.replace(/_/g, " ")}</Text>
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Text style={styles.muted}>Price</Text>
@@ -97,7 +182,10 @@ function OverviewSection({ symbol }: { symbol: string }) {
             <Text
               style={[
                 styles.change,
-                { color: a.change_pct >= 0 ? colors.bullish : colors.bearish },
+                {
+                  color:
+                    a.change_pct >= 0 ? colors.bullish : colors.bearish,
+                },
               ]}
             >
               {a.change_pct >= 0 ? "+" : ""}
@@ -127,9 +215,15 @@ function OverviewSection({ symbol }: { symbol: string }) {
         )}
       </View>
 
+      <AgentButtons symbol={symbol} />
+
       {a.strengths && a.strengths.length > 0 && (
-        <View style={[styles.card, { borderColor: colors.bullish, borderWidth: 1 }]}>
-          <Text style={[styles.cardTitle, { color: colors.bullish }]}>Strengths</Text>
+        <View
+          style={[styles.card, { borderColor: colors.bullish, borderWidth: 1 }]}
+        >
+          <Text style={[styles.cardTitle, { color: colors.bullish }]}>
+            Strengths
+          </Text>
           {a.strengths.map((s, i) => (
             <Text key={i} style={styles.bullet}>
               • {s}
@@ -138,8 +232,12 @@ function OverviewSection({ symbol }: { symbol: string }) {
         </View>
       )}
       {a.weaknesses && a.weaknesses.length > 0 && (
-        <View style={[styles.card, { borderColor: colors.bearish, borderWidth: 1 }]}>
-          <Text style={[styles.cardTitle, { color: colors.bearish }]}>Weaknesses</Text>
+        <View
+          style={[styles.card, { borderColor: colors.bearish, borderWidth: 1 }]}
+        >
+          <Text style={[styles.cardTitle, { color: colors.bearish }]}>
+            Weaknesses
+          </Text>
           {a.weaknesses.map((w, i) => (
             <Text key={i} style={styles.bullet}>
               • {w}
@@ -162,13 +260,21 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
         <Text style={styles.mono}>{value.toFixed(0)}</Text>
       </View>
       <View style={styles.barTrack}>
-        <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: color }]} />
+        <View
+          style={[styles.barFill, { width: `${pct}%`, backgroundColor: color }]}
+        />
       </View>
     </View>
   );
 }
 
-function RetRow({ label, value }: { label: string; value: number | null | undefined }) {
+function RetRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | null | undefined;
+}) {
   if (value === null || value === undefined) {
     return (
       <View style={styles.retRow}>
@@ -190,6 +296,471 @@ function RetRow({ label, value }: { label: string; value: number | null | undefi
         {value.toFixed(1)}%
       </Text>
     </View>
+  );
+}
+
+/* --- Price chart --- */
+
+const RANGE_OPTIONS: { label: string; days: number }[] = [
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+];
+
+function PriceChart({ symbol }: { symbol: string }) {
+  const [days, setDays] = useState(90);
+  const q = useQuery({
+    queryKey: ["chart", symbol, days],
+    queryFn: () => api.chart(symbol, days),
+  });
+
+  const width = Math.min(Dimensions.get("window").width - spacing.lg * 2, 520);
+  const height = 180;
+  const padX = 8;
+  const padY = 12;
+
+  const bars = q.data?.bars ?? [];
+
+  const { pathD, minClose, maxClose, firstClose, lastClose, xAt, yAt } =
+    useMemo(() => {
+      if (bars.length < 2) {
+        return {
+          pathD: "",
+          minClose: 0,
+          maxClose: 0,
+          firstClose: 0,
+          lastClose: 0,
+          xAt: () => 0,
+          yAt: () => 0,
+        };
+      }
+      const closes = bars.map((b) => b.close);
+      const min = Math.min(...closes);
+      const max = Math.max(...closes);
+      const range = max - min || 1;
+      const innerW = width - padX * 2;
+      const innerH = height - padY * 2;
+      const n = bars.length;
+      const xAt = (i: number) => padX + (i / (n - 1)) * innerW;
+      const yAt = (v: number) => padY + (1 - (v - min) / range) * innerH;
+      let d = `M ${xAt(0)} ${yAt(closes[0])}`;
+      for (let i = 1; i < n; i++) d += ` L ${xAt(i)} ${yAt(closes[i])}`;
+      return {
+        pathD: d,
+        minClose: min,
+        maxClose: max,
+        firstClose: closes[0],
+        lastClose: closes[closes.length - 1],
+        xAt,
+        yAt,
+      };
+    }, [bars, width]);
+
+  const up = lastClose >= firstClose;
+  const lineColor = up ? colors.bullish : colors.bearish;
+  const fillRect = `${colors.primary}15`;
+  const lastIdx = bars.length - 1;
+  const changePct =
+    firstClose > 0 ? ((lastClose - firstClose) / firstClose) * 100 : 0;
+
+  return (
+    <View style={styles.card}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: spacing.sm,
+        }}
+      >
+        <Text style={styles.cardTitle}>Price</Text>
+        {bars.length >= 2 && (
+          <Text
+            style={[
+              styles.mono,
+              { color: up ? colors.bullish : colors.bearish },
+            ]}
+          >
+            {up ? "+" : ""}
+            {changePct.toFixed(2)}% · {RANGE_OPTIONS.find((r) => r.days === days)?.label}
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.rangeBar}>
+        {RANGE_OPTIONS.map((r) => {
+          const active = days === r.days;
+          return (
+            <Pressable
+              key={r.days}
+              onPress={() => setDays(r.days)}
+              style={[styles.rangeBtn, active && styles.rangeBtnActive]}
+            >
+              <Text
+                style={[
+                  styles.rangeBtnText,
+                  active && styles.rangeBtnTextActive,
+                ]}
+              >
+                {r.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {q.isLoading ? (
+        <View style={{ height, justifyContent: "center", alignItems: "center" }}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : bars.length < 2 ? (
+        <View style={{ height, justifyContent: "center", alignItems: "center" }}>
+          <Text style={styles.muted}>No chart data.</Text>
+        </View>
+      ) : (
+        <Svg width={width} height={height}>
+          <SvgLine
+            x1={padX}
+            y1={yAt(minClose)}
+            x2={width - padX}
+            y2={yAt(minClose)}
+            stroke={colors.borderSubtle}
+            strokeWidth={0.5}
+          />
+          <SvgLine
+            x1={padX}
+            y1={yAt(maxClose)}
+            x2={width - padX}
+            y2={yAt(maxClose)}
+            stroke={colors.borderSubtle}
+            strokeWidth={0.5}
+          />
+          <Path
+            d={`${pathD} L ${xAt(lastIdx)} ${height - padY} L ${xAt(0)} ${
+              height - padY
+            } Z`}
+            fill={fillRect}
+            stroke="none"
+          />
+          <Path d={pathD} stroke={lineColor} strokeWidth={1.5} fill="none" />
+          <Circle
+            cx={xAt(lastIdx)}
+            cy={yAt(lastClose)}
+            r={3}
+            fill={lineColor}
+          />
+          <SvgText
+            x={width - padX}
+            y={yAt(maxClose) - 2}
+            fontSize="9"
+            fill={colors.textDim}
+            textAnchor="end"
+          >
+            {maxClose.toFixed(2)}
+          </SvgText>
+          <SvgText
+            x={width - padX}
+            y={yAt(minClose) + 9}
+            fontSize="9"
+            fill={colors.textDim}
+            textAnchor="end"
+          >
+            {minClose.toFixed(2)}
+          </SvgText>
+        </Svg>
+      )}
+    </View>
+  );
+}
+
+/* --- Indicators --- */
+
+function IndicatorsSection({ symbol }: { symbol: string }) {
+  const q = useQuery({
+    queryKey: ["indicators", symbol],
+    queryFn: () => api.indicators(symbol),
+  });
+  if (q.isLoading) return <Loading />;
+  const d: IndicatorsResponse | undefined = q.data;
+  if (!d || d.error) return <ErrorCard message={d?.error ?? "no data"} />;
+  const s = d.snapshot;
+  if (!s) return <ErrorCard message="no indicator snapshot" />;
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      {d.mood && d.mood.score !== null && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Market Mood Meter</Text>
+          <View style={styles.row}>
+            <Text style={styles.big}>{d.mood.score?.toFixed(0)}</Text>
+            <Text
+              style={[
+                styles.verdict,
+                { color: moodColor(d.mood.score), fontWeight: "700" },
+              ]}
+            >
+              {d.mood.label.replace(/_/g, " ")}
+            </Text>
+          </View>
+          <View style={styles.moodTrack}>
+            <View
+              style={[
+                styles.moodFill,
+                {
+                  width: `${Math.max(0, Math.min(100, d.mood.score ?? 0))}%`,
+                  backgroundColor: moodColor(d.mood.score),
+                },
+              ]}
+            />
+          </View>
+          {d.verdict && (
+            <Text style={styles.muted}>
+              RSI verdict: {d.verdict.replace(/_/g, " ")}
+            </Text>
+          )}
+        </View>
+      )}
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Momentum</Text>
+        <IndRow
+          label="RSI (14)"
+          value={s.rsi}
+          format={(v) => v.toFixed(1)}
+          colorFn={(v) =>
+            v >= 70
+              ? colors.bearish
+              : v <= 30
+              ? colors.bullish
+              : colors.textMuted
+          }
+          hint={(v) =>
+            v >= 70 ? "overbought" : v <= 30 ? "oversold" : "neutral"
+          }
+        />
+        <IndRow
+          label="Stoch %K"
+          value={s.stoch_k}
+          format={(v) => v.toFixed(1)}
+          colorFn={(v) =>
+            v >= 80
+              ? colors.bearish
+              : v <= 20
+              ? colors.bullish
+              : colors.textMuted
+          }
+          hint={(v) =>
+            v >= 80 ? "overbought" : v <= 20 ? "oversold" : "neutral"
+          }
+        />
+        <IndRow
+          label="Williams %R"
+          value={s.williams_r}
+          format={(v) => v.toFixed(1)}
+          colorFn={(v) =>
+            v >= -20
+              ? colors.bearish
+              : v <= -80
+              ? colors.bullish
+              : colors.textMuted
+          }
+          hint={(v) =>
+            v >= -20 ? "overbought" : v <= -80 ? "oversold" : "neutral"
+          }
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Trend / Volatility</Text>
+        <IndRow
+          label="MACD line"
+          value={s.macd_line}
+          format={(v) => v.toFixed(3)}
+          colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
+        />
+        <IndRow
+          label="MACD hist"
+          value={s.macd_hist}
+          format={(v) => v.toFixed(3)}
+          colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
+          hint={(v) => (v >= 0 ? "above signal" : "below signal")}
+        />
+        <IndRow
+          label="Bollinger %B"
+          value={s.bb_pct}
+          format={(v) => (v * 100).toFixed(0) + "%"}
+          colorFn={(v) =>
+            v >= 1
+              ? colors.bearish
+              : v <= 0
+              ? colors.bullish
+              : colors.textMuted
+          }
+          hint={(v) =>
+            v >= 1
+              ? "above upper band"
+              : v <= 0
+              ? "below lower band"
+              : "in band"
+          }
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Rate of Change</Text>
+        <IndRow
+          label="10-day"
+          value={s.roc_10}
+          format={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`}
+          colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
+        />
+        <IndRow
+          label="21-day"
+          value={s.roc_21}
+          format={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`}
+          colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
+        />
+        <IndRow
+          label="63-day"
+          value={s.roc_63}
+          format={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`}
+          colorFn={(v) => (v >= 0 ? colors.bullish : colors.bearish)}
+        />
+      </View>
+    </View>
+  );
+}
+
+function IndRow({
+  label,
+  value,
+  format,
+  colorFn,
+  hint,
+}: {
+  label: string;
+  value: number | null;
+  format: (v: number) => string;
+  colorFn: (v: number) => string;
+  hint?: (v: number) => string;
+}) {
+  if (value === null || value === undefined) {
+    return (
+      <View style={styles.retRow}>
+        <Text style={styles.muted}>{label}</Text>
+        <Text style={styles.muted}>--</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.retRow}>
+      <Text style={styles.muted}>{label}</Text>
+      <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
+        {hint && (
+          <Text style={[styles.muted, { fontSize: 11 }]}>{hint(value)}</Text>
+        )}
+        <Text style={[styles.mono, { color: colorFn(value) }]}>
+          {format(value)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function moodColor(score: number | null | undefined): string {
+  if (score === null || score === undefined) return colors.textDim;
+  if (score >= 65) return colors.bullish;
+  if (score >= 45) return colors.amber;
+  return colors.bearish;
+}
+
+/* --- AI Agent buttons + modal --- */
+
+function AgentButtons({ symbol }: { symbol: string }) {
+  const [activeTopic, setActiveTopic] = useState<AgentTopic | null>(null);
+  const topicsQ = useQuery({
+    queryKey: ["agent-topics"],
+    queryFn: api.agentTopics,
+  });
+  const topics = Array.isArray(topicsQ.data) ? topicsQ.data : [];
+  if (!topics.length) return null;
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>AI Analyst</Text>
+      <View style={styles.agentGrid}>
+        {topics.map((t) => (
+          <Pressable
+            key={t.key}
+            onPress={() => setActiveTopic(t)}
+            style={({ pressed }) => [
+              styles.agentBtn,
+              pressed && { opacity: 0.6 },
+            ]}
+          >
+            <Text style={styles.agentBtnText}>{t.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <AgentSheet
+        symbol={symbol}
+        topic={activeTopic}
+        onClose={() => setActiveTopic(null)}
+      />
+    </View>
+  );
+}
+
+function AgentSheet({
+  symbol,
+  topic,
+  onClose,
+}: {
+  symbol: string;
+  topic: AgentTopic | null;
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    enabled: topic !== null,
+    queryKey: ["agent", symbol, topic?.key],
+    queryFn: () => api.agent(symbol, topic!.key),
+  });
+
+  return (
+    <Modal
+      visible={topic !== null}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.sheetBackdrop} edges={["top", "bottom"]}>
+        <View style={styles.sheet}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>
+              {topic?.label} · {symbol}
+            </Text>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <Text style={{ color: colors.primary, fontSize: 16 }}>Done</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+            {q.isLoading && <Loading />}
+            {q.data?.error && (
+              <Text style={{ color: colors.amber }}>{q.data.error}</Text>
+            )}
+            {q.data?.markdown && (
+              <Text style={styles.agentBody}>{q.data.markdown}</Text>
+            )}
+            {q.data?.model && (
+              <Text style={[styles.muted, { marginTop: spacing.lg }]}>
+                Model: {q.data.model}
+              </Text>
+            )}
+          </ScrollView>
+        </View>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -271,7 +842,6 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
         style={styles.seasonTableWrap}
       >
         <View>
-          {/* Header row */}
           <View style={[styles.sRow, styles.sHeaderRow]}>
             <View style={[styles.sCellYear, styles.sHeaderCell]}>
               <Text style={styles.sHeaderText}>Year</Text>
@@ -283,7 +853,6 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
             ))}
           </View>
 
-          {/* Probability % row */}
           <View style={[styles.sRow, styles.sAggRow]}>
             <View style={styles.sCellYear}>
               <Text style={styles.sAggLabel}>Probability %</Text>
@@ -315,7 +884,6 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
             ))}
           </View>
 
-          {/* Average return % row */}
           <View style={[styles.sRow, styles.sAggRow, styles.sAggRowBorder]}>
             <View style={styles.sCellYear}>
               <Text style={styles.sAggLabel}>Avg return %</Text>
@@ -348,8 +916,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
             ))}
           </View>
 
-          {/* Per-year rows */}
-          {rows.map((row) => (
+          {rows.map((row: SeasonalityHeatmapRow) => (
             <View key={row.year} style={styles.sRow}>
               <View style={styles.sCellYear}>
                 <Text style={styles.sYearText}>{row.year}</Text>
@@ -366,8 +933,7 @@ function SeasonalitySection({ symbol }: { symbol: string }) {
                         style={[
                           styles.sCellText,
                           {
-                            color:
-                              v >= 0 ? colors.bullish : colors.bearish,
+                            color: v >= 0 ? colors.bullish : colors.bearish,
                           },
                         ]}
                       >
@@ -512,7 +1078,9 @@ function SentimentBadge({ s }: { s: string }) {
       ? colors.bearish
       : colors.textMuted;
   return (
-    <View style={{ width: 8, height: "100%", backgroundColor: c, borderRadius: 2 }} />
+    <View
+      style={{ width: 8, height: "100%", backgroundColor: c, borderRadius: 2 }}
+    />
   );
 }
 
@@ -536,17 +1104,24 @@ function ErrorCard({ message }: { message: string }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  tabBar: {
-    flexDirection: "row",
+  tabBarWrap: {
     borderBottomColor: colors.borderSubtle,
     borderBottomWidth: 1,
+    maxHeight: 44,
+    flexGrow: 0,
+  },
+  tabBar: {
     paddingHorizontal: spacing.md,
   },
   tab: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   tabActive: { borderBottomColor: colors.primary, borderBottomWidth: 2 },
   tabText: { color: colors.textMuted, fontSize: 13 },
   tabTextActive: { color: colors.primary, fontWeight: "700" },
-  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   card: {
     backgroundColor: colors.bgElevated,
     borderRadius: radius.md,
@@ -609,6 +1184,82 @@ const styles = StyleSheet.create({
   },
   newsTitle: { color: colors.text, fontSize: 14, fontWeight: "600" },
   newsMeta: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+
+  rangeBar: {
+    flexDirection: "row",
+    alignSelf: "flex-start",
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+    marginBottom: spacing.sm,
+  },
+  rangeBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    backgroundColor: colors.bgElevated,
+  },
+  rangeBtnActive: { backgroundColor: colors.primaryDark },
+  rangeBtnText: { color: colors.textMuted, fontSize: 11 },
+  rangeBtnTextActive: { color: "#000", fontWeight: "700" },
+
+  moodTrack: {
+    height: 6,
+    backgroundColor: colors.bgCard,
+    borderRadius: 3,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  moodFill: { height: 6, borderRadius: 3 },
+
+  agentGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  agentBtn: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  agentBtnText: { color: colors.text, fontSize: 12, fontWeight: "600" },
+
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
+  sheet: {
+    flex: 1,
+    marginTop: 60,
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: colors.border,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomColor: colors.borderSubtle,
+    borderBottomWidth: 1,
+  },
+  sheetTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+    marginRight: spacing.md,
+  },
+  agentBody: {
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 21,
+  },
 
   sampleBar: {
     flexDirection: "row",

@@ -51,12 +51,62 @@ const FUNDAMENTALS_EMPTY = {
   has_fundamentals: false,
 };
 
+const CHART = {
+  symbol: "NVDA",
+  bars: Array.from({ length: 10 }, (_, i) => ({
+    timestamp: `2026-04-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+    open: 100 + i,
+    high: 102 + i,
+    low: 99 + i,
+    close: 101 + i,
+    volume: 1_000_000,
+  })),
+};
+
+const INDICATORS = {
+  symbol: "NVDA",
+  snapshot: {
+    price: 201.68,
+    rsi: 68.4,
+    macd_line: 1.23,
+    macd_signal: 0.98,
+    macd_hist: 0.25,
+    bb_upper: 210,
+    bb_lower: 180,
+    bb_pct: 0.72,
+    stoch_k: 74,
+    stoch_d: 68,
+    williams_r: -22,
+    roc_10: 4.2,
+    roc_21: 12.1,
+    roc_63: 28.5,
+  },
+  mood: { score: 72.3, label: "greed" },
+  verdict: "neutral",
+};
+
+const AGENT_TOPICS = [
+  { key: "whats_happening", label: "What's happening?" },
+  { key: "full_analysis", label: "Full Analysis" },
+];
+
+const AGENT_RESPONSE = {
+  markdown: "## Summary\nNVDA is riding an AI wave with strong DC revenue.",
+  model: "claude-opus-4-7",
+};
+
 function routeFetch(url: string) {
   if (url.includes("/analyzer/")) return ANALYZER;
   if (url.includes("/trends/")) return TRENDS;
   if (url.includes("/seasonality")) return SEASONALITY;
   if (url.includes("/fundamentals")) return FUNDAMENTALS_EMPTY;
   if (url.includes("/news")) return { articles: [] };
+  if (url.includes("/chart/")) return CHART;
+  if (url.includes("/instrument/") && url.includes("/indicators"))
+    return INDICATORS;
+  if (url.includes("/agent/topics")) return AGENT_TOPICS;
+  if (url.includes("/agent/")) return AGENT_RESPONSE;
+  if (url.includes("/watchlist/server")) return ["AAPL"];
   return {};
 }
 
@@ -73,9 +123,15 @@ describe("InstrumentScreen", () => {
     );
   });
 
-  it("renders the 4 section tabs", () => {
+  it("renders the 5 section tabs", () => {
     const { getByText } = renderWithProviders(<InstrumentScreen />);
-    for (const label of ["Overview", "Seasonality", "Fundamentals", "News"]) {
+    for (const label of [
+      "Overview",
+      "Indicators",
+      "Seasonality",
+      "Fundamentals",
+      "News",
+    ]) {
       expect(getByText(label)).toBeTruthy();
     }
   });
@@ -117,5 +173,32 @@ describe("InstrumentScreen", () => {
     await findByText("A");
     fireEvent.press(getByText("News"));
     expect(await findByText(/No news mentioning NVDA/i)).toBeTruthy();
+  });
+
+  it("Indicators tab shows RSI, mood, and MACD values", async () => {
+    const { findByText, getByText } = renderWithProviders(<InstrumentScreen />);
+    await findByText("A");
+    fireEvent.press(getByText("Indicators"));
+    expect(await findByText(/Market Mood Meter/i)).toBeTruthy();
+    expect(await findByText(/RSI \(14\)/i)).toBeTruthy();
+    expect(await findByText(/68\.4/)).toBeTruthy(); // RSI value
+    expect(await findByText(/greed/)).toBeTruthy(); // mood label
+  });
+
+  it("Overview shows AI Agent topic buttons that open a sheet", async () => {
+    const { findByText, getByText, queryByText } = renderWithProviders(
+      <InstrumentScreen />,
+    );
+    await findByText("A");
+    // Topic button
+    const topicBtn = await findByText("What's happening?");
+    expect(topicBtn).toBeTruthy();
+    // Modal not open yet
+    expect(queryByText(/AI wave/)).toBeNull();
+    fireEvent.press(topicBtn);
+    // Modal content appears
+    expect(await findByText(/AI wave/)).toBeTruthy();
+    // Close the sheet
+    fireEvent.press(getByText("Done"));
   });
 });

@@ -11,6 +11,7 @@ export const API_BASE: string =
 async function request<T>(
   path: string,
   params?: Record<string, string | number | boolean | undefined>,
+  method: "GET" | "POST" = "GET",
 ): Promise<T> {
   const url = new URL(path, API_BASE);
   if (params) {
@@ -18,7 +19,7 @@ async function request<T>(
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     }
   }
-  const resp = await fetch(url.toString());
+  const resp = await fetch(url.toString(), { method });
   if (!resp.ok) {
     throw new Error(`API error ${resp.status}: ${path}`);
   }
@@ -45,6 +46,24 @@ export const api = {
     request<NewsResponse>(`/instrument/${symbol}/news`),
 
   watchlist: () => request<string[]>("/watchlist/server"),
+
+  saveWatchlist: (symbols: string[]) =>
+    request<{ status: string; symbols: string[] }>(
+      "/watchlist/server",
+      { symbols: symbols.join(",") },
+      "POST",
+    ),
+
+  chart: (symbol: string, days = 180) =>
+    request<ChartResponse>(`/chart/${symbol}`, { days }),
+
+  indicators: (symbol: string) =>
+    request<IndicatorsResponse>(`/instrument/${symbol}/indicators`),
+
+  agentTopics: () => request<AgentTopic[]>("/agent/topics"),
+
+  agent: (symbol: string, topic: string) =>
+    request<AgentResponse>(`/instrument/${symbol}/agent/${topic}`),
 };
 
 export type SignalSummary = {
@@ -161,4 +180,61 @@ export type NewsArticle = {
 export type NewsResponse = {
   symbol: string;
   articles: NewsArticle[];
+};
+
+export type ChartBar = {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema9?: number | null;
+  ema21?: number | null;
+  ema50?: number | null;
+  ema200?: number | null;
+};
+
+export type ChartResponse = {
+  symbol: string;
+  bars: ChartBar[];
+};
+
+export type IndicatorSnapshot = {
+  price: number;
+  rsi: number | null;
+  macd_line: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
+  bb_upper: number | null;
+  bb_lower: number | null;
+  bb_pct: number | null;
+  stoch_k: number | null;
+  stoch_d: number | null;
+  williams_r: number | null;
+  roc_10: number | null;
+  roc_21: number | null;
+  roc_63: number | null;
+};
+
+export type MoodReading = {
+  score: number | null;
+  label: string;
+};
+
+export type IndicatorsResponse = {
+  symbol: string;
+  snapshot?: IndicatorSnapshot;
+  mood?: MoodReading;
+  verdict?: string;
+  error?: string;
+};
+
+export type AgentTopic = { key: string; label: string };
+
+export type AgentResponse = {
+  markdown?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+  model?: string;
+  error?: string;
 };
