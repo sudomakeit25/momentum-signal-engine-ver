@@ -3,6 +3,7 @@ import { Link } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Constants from "expo-constants";
 import { API_BASE } from "../../src/lib/api";
+import { COMMUNITY_FEED_ENABLED } from "../../src/lib/flags";
 import { usePushRegistration } from "../../src/lib/push";
 import { colors, radius, spacing } from "../../src/lib/theme";
 
@@ -69,12 +70,14 @@ export default function SettingsScreen() {
             <Text style={styles.chevron}>›</Text>
           </Pressable>
         </Link>
-        <Link href="/community" asChild>
-          <Pressable style={styles.linkRow}>
-            <Text style={styles.link}>Community feed</Text>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-        </Link>
+        {COMMUNITY_FEED_ENABLED && (
+          <Link href="/community" asChild>
+            <Pressable style={styles.linkRow}>
+              <Text style={styles.link}>Community feed</Text>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          </Link>
+        )}
       </View>
 
       <View style={styles.section}>

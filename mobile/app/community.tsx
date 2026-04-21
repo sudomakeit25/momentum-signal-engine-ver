@@ -10,13 +10,27 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api, CommunityPost } from "../src/lib/api";
+import { COMMUNITY_FEED_ENABLED } from "../src/lib/flags";
 import { colors, radius, spacing } from "../src/lib/theme";
 
 export default function CommunityScreen() {
   const q = useQuery({
+    enabled: COMMUNITY_FEED_ENABLED,
     queryKey: ["community-feed"],
     queryFn: () => api.communityFeed(50),
   });
+
+  if (!COMMUNITY_FEED_ENABLED) {
+    return (
+      <SafeAreaView style={styles.container} edges={["bottom"]}>
+        <View style={styles.center}>
+          <Text style={styles.muted}>
+            Community is not available in this build.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
