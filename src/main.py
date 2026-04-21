@@ -85,18 +85,18 @@ def _refresh_loop():
     )
 
     def _signal_key(s) -> str:
-        """Stable dedup key — symbol + action + setup type only.
+        """Stable dedup key — symbol + action only.
 
-        Price intentionally omitted: small price drift between cycles on the
-        same detected setup was causing the same alert to re-fire.
+        Price was dropped earlier because micro-drift re-fired the same
+        alert. setup_type is dropped here for the same class of reason:
+        the generator can emit the same symbol/action across multiple
+        setup types (EMA_CROSSOVER, BREAKOUT, RSI_PULLBACK, VWAP_RECLAIM)
+        on successive cycles as price drifts through trigger conditions.
+        The SMS body for each variant is identical to the user, so they
+        see duplicates even though the internal keys differ. A single
+        BUY or SELL per symbol per day is the user-facing contract.
         """
-        try:
-            setup = (
-                s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
-            )
-        except Exception:
-            setup = ""
-        return f"{s.symbol}:{s.action.value}:{setup}"
+        return f"{s.symbol}:{s.action.value}"
 
     while not _stop_event.is_set():
         try:

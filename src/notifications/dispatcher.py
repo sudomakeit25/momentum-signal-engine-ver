@@ -19,19 +19,18 @@ _SMS_FINGERPRINT_TTL = 30 * 60  # seconds
 
 
 def _deduped_signals_for_sms(signals: list) -> list:
-    """Collapse same symbol:action:setup to the single highest-confidence signal.
+    """Collapse same symbol:action to the single highest-confidence signal.
 
-    A secondary defense against the signal generator occasionally emitting
-    multiple variants of the same setup (which was filling SMS bodies with
-    duplicate rows like '+PFE BUY 70%' and '+PFE BUY 60%').
+    The generator emits the same symbol/action across several setup types
+    (EMA_CROSSOVER, BREAKOUT, RSI_PULLBACK, VWAP_RECLAIM). Since the SMS
+    body for each variant is identical to the user (+SYM ACTION $PRICE %),
+    keying dedup by setup as well surfaced duplicate rows. Key by
+    symbol:action and keep the highest-confidence variant so the SMS
+    reflects the strongest trigger.
     """
     by_key: dict[str, object] = {}
     for s in signals:
-        try:
-            setup = s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
-        except Exception:
-            setup = ""
-        key = f"{s.symbol}:{s.action.value}:{setup}"
+        key = f"{s.symbol}:{s.action.value}"
         existing = by_key.get(key)
         if existing is None or getattr(s, "confidence", 0) > getattr(existing, "confidence", 0):
             by_key[key] = s
