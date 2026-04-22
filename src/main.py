@@ -43,6 +43,20 @@ _REFRESH_INTERVAL = 600  # 10 min — dynamic universe is ~2k stocks, gives scan
 _stop_event = threading.Event()
 
 
+def signal_key(s) -> str:
+    """Stable dedup key — symbol + action only.
+
+    Price was dropped first because micro-drift re-fired the same alert.
+    setup_type was dropped next: the generator emits the same symbol/action
+    across multiple setup types (EMA_CROSSOVER, BREAKOUT, RSI_PULLBACK,
+    VWAP_RECLAIM) on successive cycles as price drifts through trigger
+    conditions, and the SMS body for each variant is identical to the
+    user. A single BUY or SELL per symbol per day is the user-facing
+    contract.
+    """
+    return f"{s.symbol}:{s.action.value}"
+
+
 def _build_scan_universe() -> list[str]:
     """Build the scan universe from FMP screener + user watchlist, with fallback."""
     from src.data import fmp_client
@@ -84,19 +98,7 @@ def _refresh_loop():
         len(_seen_signal_keys), _seen_date or "none",
     )
 
-    def _signal_key(s) -> str:
-        """Stable dedup key — symbol + action only.
-
-        Price was dropped earlier because micro-drift re-fired the same
-        alert. setup_type is dropped here for the same class of reason:
-        the generator can emit the same symbol/action across multiple
-        setup types (EMA_CROSSOVER, BREAKOUT, RSI_PULLBACK, VWAP_RECLAIM)
-        on successive cycles as price drifts through trigger conditions.
-        The SMS body for each variant is identical to the user, so they
-        see duplicates even though the internal keys differ. A single
-        BUY or SELL per symbol per day is the user-facing contract.
-        """
-        return f"{s.symbol}:{s.action.value}"
+    # `signal_key` is defined at module scope so it's importable by tests.
 
     while not _stop_event.is_set():
         try:
@@ -135,7 +137,7 @@ def _refresh_loop():
 
             logger.info("Signal check: %d total signals from %d results", len(all_signals), len(results))
 
-            current_keys = {_signal_key(s) for s in all_signals}
+            current_keys = {signal_key(s) for s in all_signals}
 
             # Daily rollover: start a fresh seen-set BUT still seed with current
             # keys so the rollover itself doesn't re-fire every live signal.
@@ -161,7 +163,7 @@ def _refresh_loop():
                 new_signals = []
             else:
                 new_signals = [
-                    s for s in all_signals if _signal_key(s) not in _seen_signal_keys
+                    s for s in all_signals if signal_key(s) not in _seen_signal_keys
                 ]
 
             # --- Track signals for leaderboard ---

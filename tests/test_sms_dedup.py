@@ -1,5 +1,6 @@
 """Tests for SMS within-batch dedup + body fingerprint suppression."""
 
+from src import main
 from src.notifications import dispatcher
 
 
@@ -22,6 +23,30 @@ def test_within_batch_dedup_keeps_highest_confidence():
     by_sym = {s.symbol: s for s in deduped}
     assert len(deduped) == 2
     assert by_sym["PFE"].confidence == 0.70
+
+
+def test_signal_key_ignores_setup_type_and_price():
+    # Same symbol + action yields the same dedup key regardless of which
+    # setup triggered it or the reported entry price. This is the
+    # user-facing contract the SMS dedup relies on.
+    a = _S("JPM", "BUY", "ema_crossover", 316.99, 0.55)
+    b = _S("JPM", "BUY", "breakout", 317.50, 0.70)
+    c = _S("JPM", "SELL", "breakout", 317.50, 0.70)
+    assert main.signal_key(a) == main.signal_key(b) == "JPM:BUY"
+    assert main.signal_key(c) == "JPM:SELL"
+    assert main.signal_key(a) != main.signal_key(c)
+
+
+def test_signal_key_matches_dispatcher_dedup_key():
+    # The main-loop signal_key and the dispatcher-level batch dedup key
+    # must stay in lockstep; if they diverge, a signal can land in the
+    # "seen" set but still emit a duplicate SMS within the same batch
+    # (or vice versa). This test guards against one side being changed
+    # without the other.
+    sigs = [_S("JPM", "BUY", "ema_crossover", 316.99, 0.55)]
+    deduped_keys = {f"{s.symbol}:{s.action.value}" for s in dispatcher._deduped_signals_for_sms(sigs)}
+    main_keys = {main.signal_key(s) for s in sigs}
+    assert deduped_keys == main_keys
 
 
 def test_dedup_collapses_across_setup_types_for_same_symbol_action():
