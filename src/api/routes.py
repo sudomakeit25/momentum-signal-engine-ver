@@ -2532,6 +2532,19 @@ def scanner_intraday_patterns():
     return {"patterns": load_intraday_latest()}
 
 
+@router.get("/scanner/cyclicals")
+def scanner_cyclicals():
+    """Stocks with regular, predictable oscillations — mean-reversion
+    candidates. Scanned hourly over the last 7 days; results cached by
+    the background refresh loop (1h cache). Each row carries a bias
+    (BUY / SELL / HOLD) based on where the price currently sits within
+    the recent range."""
+    cached = _scan_cache.get("cyclicals")
+    if cached:
+        return {"cyclicals": cached[1], "generated_at": cached[0]}
+    return {"cyclicals": [], "generated_at": None}
+
+
 @router.get("/screener/preset/{strategy}")
 def screener_preset_run(
     strategy: str,

@@ -275,6 +275,36 @@ def _refresh_loop():
                     logger.info("Profile screener cache warmed: %d rows", warmed)
             except Exception as e:
                 logger.debug("Profile screener warmup failed: %s", e)
+
+            # Cyclical / mean-reversion scan, hourly. Universe is the
+            # watchlist plus the top 200 names by score from this cycle,
+            # so we don't eat the Alpaca quota on the full ~2k universe
+            # for a slow-moving detector.
+            try:
+                prev = _scan_cache.get("cyclicals")
+                stale = (not prev) or (time.time() - prev[0] >= 60 * 60)
+                if stale:
+                    from src.scanner.cyclical import scan_cyclicals
+                    from src.data.redis_store import get_watchlist
+                    top_by_score = sorted(
+                        results, key=lambda r: r.score or 0, reverse=True
+                    )[:200]
+                    universe = list(
+                        {s for s in (get_watchlist() or [])}
+                        | {r.symbol for r in top_by_score}
+                    )
+                    if universe:
+                        cyclicals = scan_cyclicals(universe)
+                        _scan_cache["cyclicals"] = (
+                            time.time(),
+                            [c.to_dict() for c in cyclicals],
+                        )
+                        logger.info(
+                            "Cyclical scan: %d cyclicals from %d symbols",
+                            len(cyclicals), len(universe),
+                        )
+            except Exception as e:
+                logger.warning("Cyclical scan failed: %s", e)
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 

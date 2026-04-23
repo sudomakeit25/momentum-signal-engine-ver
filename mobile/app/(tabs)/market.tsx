@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   api,
   BreadthResponse,
+  Cyclical,
   DarkPoolScanRow,
   IntradayPattern,
   OptionsFlowScanRow,
@@ -55,6 +56,11 @@ export default function MarketScreen() {
     queryFn: api.intradayPatterns,
     refetchInterval: 60_000,
   });
+  const cyclicals = useQuery({
+    queryKey: ["cyclicals"],
+    queryFn: api.cyclicals,
+    refetchInterval: 10 * 60_000,
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -69,6 +75,10 @@ export default function MarketScreen() {
         <IntradayCard
           data={intraday.data?.patterns ?? []}
           loading={intraday.isLoading}
+        />
+        <CyclicalsCard
+          data={cyclicals.data?.cyclicals ?? []}
+          loading={cyclicals.isLoading}
         />
         <RegimeCard data={regime.data} loading={regime.isLoading} />
         <BreadthCard data={breadth.data} loading={breadth.isLoading} />
@@ -175,6 +185,93 @@ function patternLabel(t: string): string {
     default:
       return t;
   }
+}
+
+function CyclicalsCard({
+  data,
+  loading,
+}: {
+  data: Cyclical[];
+  loading: boolean;
+}) {
+  if (loading) return <CardSkeleton title="CYCLICALS" />;
+  if (!data || data.length === 0) return null;
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>
+        CYCLICALS · MEAN REVERSION
+      </Text>
+      {data.slice(0, 10).map((c) => {
+        const biasColor =
+          c.bias === "BUY"
+            ? colors.bullish
+            : c.bias === "SELL"
+            ? colors.bearish
+            : colors.textMuted;
+        return (
+          <Link
+            key={c.symbol}
+            href={`/instrument/${c.symbol}`}
+            asChild
+          >
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  paddingVertical: 8,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderSubtle,
+                },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <View style={styles.row}>
+                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                  <Text style={styles.mono}>{c.symbol}</Text>
+                  <Text
+                    style={{
+                      color: biasColor,
+                      fontSize: 10,
+                      fontWeight: "700",
+                      borderWidth: 1,
+                      borderColor: biasColor,
+                      paddingHorizontal: 4,
+                      paddingVertical: 1,
+                      borderRadius: 3,
+                    }}
+                  >
+                    {c.bias}
+                  </Text>
+                </View>
+                <Text style={styles.mono}>${c.current_price.toFixed(2)}</Text>
+              </View>
+              {/* Range position bar */}
+              <View style={{ height: 4, marginTop: 6, backgroundColor: colors.bgCard, borderRadius: 2 }}>
+                <View
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    height: 4,
+                    width: 4,
+                    left: `${c.range_position * 100}%`,
+                    backgroundColor: colors.primary,
+                    borderRadius: 2,
+                  }}
+                />
+              </View>
+              <View style={[styles.row, { marginTop: 4 }]}>
+                <Text style={[styles.muted, { fontSize: 10 }]}>
+                  ${c.range_low.toFixed(2)} – ${c.range_high.toFixed(2)}
+                </Text>
+                <Text style={[styles.muted, { fontSize: 10 }]}>
+                  {c.cycles}x · {c.mean_amplitude_pct.toFixed(1)}% · score {(c.cyclical_score * 100).toFixed(0)}
+                </Text>
+              </View>
+            </Pressable>
+          </Link>
+        );
+      })}
+    </View>
+  );
 }
 
 function RegimeCard({

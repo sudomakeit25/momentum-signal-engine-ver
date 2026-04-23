@@ -116,6 +116,11 @@ export const api = {
   intradayPatterns: () =>
     request<{ patterns: IntradayPattern[] }>("/scanner/intraday-patterns"),
 
+  cyclicals: () =>
+    request<{ cyclicals: Cyclical[]; generated_at: number | null }>(
+      "/scanner/cyclicals",
+    ),
+
   // --- Stage 3: Utility endpoints ---
   alertsHistory: (limit = 100, enrich = false) =>
     request<AlertHistoryItem[]>("/alerts/history", { limit, enrich }),
@@ -529,6 +534,22 @@ export type OptionsFlowScanRow = {
   total_put_volume: number;
   flow_sentiment: string;
   alert_reasons: string[];
+};
+
+// --- Cyclicals ---
+export type Cyclical = {
+  symbol: string;
+  cycles: number;
+  mean_amplitude_pct: number;
+  amplitude_cv: number;
+  mean_period_bars: number;
+  period_cv: number;
+  range_position: number;
+  range_low: number;
+  range_high: number;
+  current_price: number;
+  cyclical_score: number;
+  bias: "BUY" | "SELL" | "HOLD" | string;
 };
 
 // --- Intraday patterns ---
