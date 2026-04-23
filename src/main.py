@@ -276,33 +276,64 @@ def _refresh_loop():
             except Exception as e:
                 logger.debug("Profile screener warmup failed: %s", e)
 
-            # Cyclical / mean-reversion scan, hourly. Universe is the
-            # watchlist plus the top 200 names by score from this cycle,
-            # so we don't eat the Alpaca quota on the full ~2k universe
-            # for a slow-moving detector.
+            # Cyclical / mean-reversion scan, hourly. Two parallel scans
+            # at different time horizons, merged into one cache:
+            #   FAST: hourly bars / 7 days, on watchlist + top 300 by
+            #         momentum score. Catches active oscillators like
+            #         CLSK, RIVN.
+            #   SLOW: daily bars / 60 days, on a curated list of sector
+            #         ETFs, utilities, staples, REITs, bond proxies.
+            #         These rarely show up in momentum scans but
+            #         oscillate cleanly on the larger timeframe.
+            # Same detector + thresholds — only the bar timeframe and
+            # lookback differ.
             try:
                 prev = _scan_cache.get("cyclicals")
                 stale = (not prev) or (time.time() - prev[0] >= 60 * 60)
                 if stale:
-                    from src.scanner.cyclical import scan_cyclicals
+                    from src.scanner.cyclical import scan_cyclicals, CYCLICAL_CANDIDATES_EXTRA
                     from src.data.redis_store import get_watchlist
+                    from alpaca.data.timeframe import TimeFrame as _TF
+
                     top_by_score = sorted(
                         results, key=lambda r: r.score or 0, reverse=True
-                    )[:200]
-                    universe = list(
+                    )[:300]
+                    fast_universe = list(
                         {s for s in (get_watchlist() or [])}
                         | {r.symbol for r in top_by_score}
                     )
-                    if universe:
-                        cyclicals = scan_cyclicals(universe)
-                        _scan_cache["cyclicals"] = (
-                            time.time(),
-                            [c.to_dict() for c in cyclicals],
-                        )
+
+                    cyc_fast = []
+                    if fast_universe:
+                        cyc_fast = scan_cyclicals(fast_universe)
                         logger.info(
-                            "Cyclical scan: %d cyclicals from %d symbols",
-                            len(cyclicals), len(universe),
+                            "Cyclical fast scan: %d cyclicals from %d symbols",
+                            len(cyc_fast), len(fast_universe),
                         )
+
+                    cyc_slow = scan_cyclicals(
+                        list(CYCLICAL_CANDIDATES_EXTRA),
+                        timeframe=_TF.Day,
+                        lookback_days=60,
+                    )
+                    logger.info(
+                        "Cyclical slow scan: %d cyclicals from %d symbols",
+                        len(cyc_slow), len(CYCLICAL_CANDIDATES_EXTRA),
+                    )
+
+                    # Dedup by symbol — fast wins on conflict (more
+                    # actionable, shorter horizon).
+                    seen = {c.symbol for c in cyc_fast}
+                    merged = list(cyc_fast) + [c for c in cyc_slow if c.symbol not in seen]
+                    merged.sort(key=lambda c: c.cyclical_score, reverse=True)
+                    _scan_cache["cyclicals"] = (
+                        time.time(),
+                        [c.to_dict() for c in merged],
+                    )
+                    logger.info(
+                        "Cyclical merged: %d total (%d fast + %d slow)",
+                        len(merged), len(cyc_fast), len(cyc_slow),
+                    )
             except Exception as e:
                 logger.warning("Cyclical scan failed: %s", e)
         except Exception as e:

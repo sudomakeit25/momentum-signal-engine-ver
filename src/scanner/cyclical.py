@@ -43,6 +43,40 @@ DEFAULT_AMPLITUDE_CV_MAX = 0.4
 DEFAULT_PERIOD_CV_MAX = 0.4
 DEFAULT_HOURLY_LOOKBACK_DAYS = 7
 
+
+# Curated universe of names that are *prior candidates* for cyclical
+# behavior. Sector ETFs explicitly rotate against each other; utilities
+# / staples / REITs trade in narrow ranges driven by rate moves; bond
+# proxies (TLT, HYG) oscillate with yields. The momentum-based top-N
+# universe misses these because they rarely have headline volatility,
+# so we always include this set in the scan regardless of momentum.
+CYCLICAL_CANDIDATES_EXTRA: tuple[str, ...] = (
+    # Broad-market and sector ETFs (the rotation baseline)
+    "SPY", "QQQ", "IWM", "DIA",
+    "XLE", "XLF", "XLK", "XLV", "XLP", "XLY",
+    "XLI", "XLB", "XLRE", "XLC", "XLU",
+    # Fixed-income and rate-sensitive ETFs
+    "TLT", "HYG", "LQD", "TIP",
+    # Commodity and FX proxies
+    "GLD", "SLV", "USO", "UNG", "UUP",
+    # Utilities — classic rate-driven oscillators
+    "NEE", "DUK", "SO", "AEP", "D", "ED", "EXC",
+    # Consumer staples — slow swing range traders
+    "KO", "PG", "PEP", "KMB", "CL", "WMT", "COST",
+    # Telecom — typically range-bound
+    "T", "VZ", "TMUS",
+    # REITs
+    "O", "AMT", "PLD", "EQIX", "SPG",
+    # Energy majors (oscillate with crude)
+    "XOM", "CVX", "COP", "OXY",
+    # Big banks (oscillate with rate expectations)
+    "JPM", "BAC", "WFC", "C", "GS", "MS",
+    # Defense — quiet oscillators
+    "LMT", "RTX", "NOC", "GD",
+    # Industrials with cyclical demand
+    "CAT", "DE", "MMM",
+)
+
 # Notes on defaults — tuned 2026-04-23 against CLSK / MARA / RIOT hourly
 # bars where the user-observed swings were clearly cyclical but much
 # smaller than a sine wave. The weekly chart's apparent 10% amplitude
@@ -272,10 +306,18 @@ def detect_cyclical(
 def scan_cyclicals(
     symbols: Iterable[str],
     *,
+    timeframe: TimeFrame = TimeFrame.Hour,
     lookback_days: int = DEFAULT_HOURLY_LOOKBACK_DAYS,
+    min_mean_amplitude_pct: float = DEFAULT_MIN_MEAN_AMPLITUDE_PCT,
 ) -> list[CyclicalStock]:
     """Run detect_cyclical on every symbol. Results are sorted by
-    cyclical_score descending so the UI can slice off the top N."""
+    cyclical_score descending so the UI can slice off the top N.
+
+    Two modes are intended:
+      - hourly bars over ~7 days for fast movers (default).
+      - daily bars over ~60 days for slow oscillators (sector ETFs,
+        utilities, REITs) — pass timeframe=TimeFrame.Day, lookback_days=60.
+    """
     symbol_list = [s for s in symbols if s]
     if not symbol_list:
         return []
@@ -283,7 +325,7 @@ def scan_cyclicals(
     try:
         bars_map = client.get_multi_bars(
             symbol_list,
-            timeframe=TimeFrame.Hour,
+            timeframe=timeframe,
             days=lookback_days,
         )
     except Exception as e:
@@ -296,7 +338,9 @@ def scan_cyclicals(
         if df is None or df.empty:
             continue
         try:
-            r = detect_cyclical(df, symbol)
+            r = detect_cyclical(
+                df, symbol, min_mean_amplitude_pct=min_mean_amplitude_pct
+            )
         except Exception as e:
             logger.debug("detect_cyclical failed for %s: %s", symbol, e)
             continue
