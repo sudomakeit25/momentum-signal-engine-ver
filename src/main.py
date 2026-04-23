@@ -47,21 +47,22 @@ _INTRADAY_INTERVAL = 300  # 5 min
 _stop_event = threading.Event()
 
 
-def _is_market_hours_et() -> bool:
+def _is_market_hours_et(now_utc: "datetime | None" = None) -> bool:
     """True between 9:35 ET and 15:45 ET on weekdays.
 
     Skips the first 5 min after open (huge gaps look like Vs) and the
     last 15 min before close (close-out volatility distorts the window).
-    Uses naive UTC math + offset rather than zoneinfo to avoid pulling
-    in a hard dep — close enough for an intraday gate.
+
+    Uses zoneinfo so the gate stays correct across DST transitions. The
+    `now_utc` argument is for tests; production calls leave it None.
     """
-    from datetime import datetime, timezone, timedelta
-    now_utc = datetime.now(timezone.utc)
-    if now_utc.weekday() >= 5:
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    et = now_utc.astimezone(ZoneInfo("America/New_York"))
+    if et.weekday() >= 5:
         return False
-    # ET is UTC-4 in DST, UTC-5 outside. Approximate with -4 since we
-    # only care about regular trading hours; the gate is by design soft.
-    et = now_utc - timedelta(hours=4)
     minutes = et.hour * 60 + et.minute
     return 9 * 60 + 35 <= minutes <= 15 * 60 + 45
 
