@@ -2523,6 +2523,15 @@ def screener_presets():
     return list_strategies()
 
 
+@router.get("/scanner/intraday-patterns")
+def scanner_intraday_patterns():
+    """Latest intraday-pattern detections (V-reversal, inverted-V,
+    breakdown, breakout). Cached by the background scan loop, which
+    runs every 5 min during US market hours."""
+    from src.data.redis_store import load_intraday_latest
+    return {"patterns": load_intraday_latest()}
+
+
 @router.get("/screener/preset/{strategy}")
 def screener_preset_run(
     strategy: str,

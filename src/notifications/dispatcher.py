@@ -81,6 +81,159 @@ def _fingerprint_of_body(body: str) -> str:
 _EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
+def _intraday_arrow(pattern_type: str) -> str:
+    """Compact glyph for SMS / push body lines."""
+    return {
+        "v_reversal": "V↑",
+        "inverted_v": "Λ↓",
+        "breakdown": "↓",
+        "breakout": "↑",
+    }.get(pattern_type, "")
+
+
+def _format_intraday_body(patterns: list, header: str | None = None) -> str:
+    """Build a short body for SMS / push from intraday patterns."""
+    if not patterns:
+        return ""
+    if header is None:
+        header = (
+            "MSE Intraday"
+            if len(patterns) == 1
+            else f"MSE Intraday: {len(patterns)} patterns"
+        )
+    lines = [header]
+    for p in patterns[:5]:
+        glyph = _intraday_arrow(p.pattern_type)
+        lines.append(
+            f"{glyph} {p.symbol} ${p.trigger_price:.2f} ({p.move_pct:+.1f}%/{p.recovery_pct:+.1f}%)"
+        )
+    return "\n".join(lines)
+
+
+def send_expo_push_intraday(tokens: list[str], patterns: list) -> bool:
+    """Push notification for intraday patterns. Mirrors send_expo_push
+    structure but uses an intraday-specific title and deep-links the
+    top-priority pattern's symbol."""
+    if not tokens or not patterns:
+        return False
+    body = _format_intraday_body(patterns, header=None)
+    fp = _fingerprint_of_body(f"intraday_push:{body}")
+    recent = _recent_sms_fingerprints()
+    if fp in recent:
+        logger.info("Intraday push suppressed (duplicate body sent %s)", recent[fp])
+        return False
+
+    title = (
+        "MSE Intraday Pattern"
+        if len(patterns) == 1
+        else f"MSE Intraday: {len(patterns)} patterns"
+    )
+    messages = [
+        {
+            "to": t,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "data": {
+                "type": "intraday_pattern",
+                "url": f"mse://instrument/{patterns[0].symbol}",
+            },
+        }
+        for t in tokens
+    ]
+    try:
+        resp = http_requests.post(
+            _EXPO_PUSH_URL,
+            json=messages,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=10,
+        )
+        ok = 200 <= resp.status_code < 300
+        if ok:
+            _record_sms_fingerprint(fp)
+            logger.info("Intraday push sent to %d tokens (%d chars)", len(tokens), len(body))
+        else:
+            logger.warning("Intraday push failed: HTTP %d: %s", resp.status_code, resp.text[:200])
+        return ok
+    except Exception as e:
+        logger.warning("Intraday push error: %s", e)
+        return False
+
+
+def dispatch_intraday_patterns(patterns: list) -> dict:
+    """Route detected intraday patterns to SMS + push.
+
+    Distinct from `dispatch_alerts` because the dedup grain differs:
+    intraday patterns are keyed by (symbol, pattern_type, trading_day)
+    so a V-reversal and a later breakdown on the same symbol can both
+    fire once. Reuses the same SMS / push primitives for delivery and
+    the same 30-min body fingerprint as a final spam guard.
+    """
+    results = {"sms": False, "push": False}
+    if not patterns:
+        return results
+
+    config = load_config()
+    if not config.auto_alerts_enabled:
+        logger.info("Intraday auto-alerts disabled, skipping dispatch")
+        return results
+
+    if config.sms_to and config.sms_consent:
+        body = _format_intraday_body(patterns)
+        fp = _fingerprint_of_body(f"intraday_sms:{body}")
+        recent = _recent_sms_fingerprints()
+        if fp in recent:
+            logger.info("Intraday SMS suppressed (duplicate body sent %s)", recent[fp])
+        else:
+            try:
+                if config.sms_method == "email_gateway" and config.sms_carrier:
+                    # Reuse the email-gateway send by feeding it a
+                    # pre-formatted body. send_email_sms expects signal
+                    # objects, so we call its primitives directly here.
+                    digits = "".join(c for c in config.sms_to if c.isdigit())
+                    if len(digits) == 11 and digits.startswith("1"):
+                        digits = digits[1:]
+                    if len(digits) == 10:
+                        gateway = CARRIER_GATEWAYS.get(config.sms_carrier)
+                        from config.settings import settings as _settings
+                        if gateway and _settings.smtp_email and _settings.smtp_password:
+                            msg = MIMEText(body)
+                            msg["From"] = _settings.smtp_email
+                            msg["To"] = f"{digits}@{gateway}"
+                            msg["Subject"] = ""
+                            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                                server.login(_settings.smtp_email, _settings.smtp_password)
+                                server.send_message(msg)
+                            _record_sms_fingerprint(fp)
+                            results["sms"] = True
+                            logger.info("Intraday email SMS sent (%d chars)", len(body))
+                elif config.sms_method == "twilio":
+                    from config.settings import settings as _settings
+                    if _settings.twilio_account_sid and _settings.twilio_auth_token and _settings.twilio_from_number:
+                        from twilio.rest import Client
+                        client = Client(_settings.twilio_account_sid, _settings.twilio_auth_token)
+                        client.messages.create(
+                            body=body,
+                            from_=_settings.twilio_from_number,
+                            to=config.sms_to,
+                        )
+                        _record_sms_fingerprint(fp)
+                        results["sms"] = True
+                        logger.info("Intraday Twilio SMS sent (%d chars)", len(body))
+            except Exception as e:
+                logger.warning("Intraday SMS dispatch failed: %s", e)
+
+    try:
+        from src.data.redis_store import get_push_tokens
+        tokens = list(get_push_tokens().keys())
+        if tokens:
+            results["push"] = send_expo_push_intraday(tokens, patterns)
+    except Exception as e:
+        logger.debug("Intraday push dispatch failed: %s", e)
+
+    return results
+
+
 def send_expo_push(tokens: list[str], signals: list) -> bool:
     """Send a push notification to each Expo push token via the Expo push API.
 

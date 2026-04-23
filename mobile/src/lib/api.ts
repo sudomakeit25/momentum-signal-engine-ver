@@ -113,6 +113,9 @@ export const api = {
     request<OptionsFlowScanRow[]>("/options-flow/scan", { top }),
   ipoCalendar: () => request<IpoCalendarResponse>("/market/ipos"),
 
+  intradayPatterns: () =>
+    request<{ patterns: IntradayPattern[] }>("/scanner/intraday-patterns"),
+
   // --- Stage 3: Utility endpoints ---
   alertsHistory: (limit = 100, enrich = false) =>
     request<AlertHistoryItem[]>("/alerts/history", { limit, enrich }),
@@ -526,6 +529,24 @@ export type OptionsFlowScanRow = {
   total_put_volume: number;
   flow_sentiment: string;
   alert_reasons: string[];
+};
+
+// --- Intraday patterns ---
+export type IntradayPattern = {
+  symbol: string;
+  pattern_type:
+    | "v_reversal"
+    | "inverted_v"
+    | "breakdown"
+    | "breakout"
+    | string;
+  action: "BUY" | "SELL" | string;
+  trigger_price: number;
+  extreme_price: number;
+  move_pct: number;
+  recovery_pct: number;
+  volume_confirmed: boolean;
+  detected_at: string;
 };
 
 // --- IPOs ---

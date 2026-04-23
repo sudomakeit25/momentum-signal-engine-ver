@@ -40,7 +40,62 @@ logging.getLogger("curl_cffi").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
 _REFRESH_INTERVAL = 600  # 10 min — dynamic universe is ~2k stocks, gives scan time to finish
+
+# Intraday-pattern scan runs on its own faster cadence and only during
+# regular US market hours. Universe is capped — see _intraday_universe().
+_INTRADAY_INTERVAL = 300  # 5 min
 _stop_event = threading.Event()
+
+
+def _is_market_hours_et() -> bool:
+    """True between 9:35 ET and 15:45 ET on weekdays.
+
+    Skips the first 5 min after open (huge gaps look like Vs) and the
+    last 15 min before close (close-out volatility distorts the window).
+    Uses naive UTC math + offset rather than zoneinfo to avoid pulling
+    in a hard dep — close enough for an intraday gate.
+    """
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.weekday() >= 5:
+        return False
+    # ET is UTC-4 in DST, UTC-5 outside. Approximate with -4 since we
+    # only care about regular trading hours; the gate is by design soft.
+    et = now_utc - timedelta(hours=4)
+    minutes = et.hour * 60 + et.minute
+    return 9 * 60 + 35 <= minutes <= 15 * 60 + 45
+
+
+def _intraday_universe(top_n: int = 100) -> list[str]:
+    """Universe for the intraday scan: watchlist + top movers from the
+    most recent daily scan, deduped and capped."""
+    from src.data.redis_store import get_watchlist
+    universe: list[str] = []
+    try:
+        universe.extend(get_watchlist() or [])
+    except Exception:
+        pass
+    cached = _scan_cache.get("scan_full")
+    if cached:
+        results = cached[1] or []
+        # Sort by dollar volume, keep the top N.
+        try:
+            ranked = sorted(
+                results,
+                key=lambda r: (r.volume or 0) * (r.price or 0),
+                reverse=True,
+            )[:top_n]
+            universe.extend(r.symbol for r in ranked)
+        except Exception:
+            pass
+    # Dedupe preserving order so the watchlist appears first.
+    seen = set()
+    deduped = []
+    for s in universe:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped
 
 
 def signal_key(s) -> str:
@@ -234,11 +289,99 @@ def _warm_profile_cache_on_startup() -> None:
         logger.warning("Startup profile cache warmup failed: %s", e)
 
 
+def _intraday_scan_loop():
+    """Faster scan loop dedicated to intraday-pattern detection.
+
+    Runs every 5 minutes, but only during regular US market hours so
+    we never burn Alpaca rate limit pre-market or overnight. Each cycle:
+      1. Build a small universe (watchlist + top 100 dollar-volume names
+         from the most recent daily scan).
+      2. Run all three pattern detectors over 5-min bars.
+      3. Skip patterns already seen in this trading session.
+      4. Dispatch new patterns through the intraday-specific dispatcher
+         (separate dedup grain from the daily Signal flow).
+      5. Cache the latest detection batch for the REST endpoint.
+    """
+    from src.data.redis_store import (
+        load_intraday_seen,
+        save_intraday_seen,
+        save_intraday_latest,
+    )
+    from src.scanner.intraday_patterns import scan_intraday_patterns
+    from src.notifications.dispatcher import dispatch_intraday_patterns
+    from datetime import datetime
+
+    seen_keys, seen_date = load_intraday_seen()
+    logger.info(
+        "Intraday loop boot: %d seen keys (date=%s)",
+        len(seen_keys), seen_date or "none",
+    )
+
+    while not _stop_event.is_set():
+        try:
+            if not _is_market_hours_et():
+                _stop_event.wait(_INTRADAY_INTERVAL)
+                continue
+
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            if today_str != seen_date:
+                logger.info(
+                    "Intraday daily rollover: clearing %d seen keys (was %s -> %s)",
+                    len(seen_keys), seen_date or "none", today_str,
+                )
+                seen_keys = set()
+                seen_date = today_str
+                save_intraday_seen(seen_keys, seen_date)
+
+            symbols = _intraday_universe(top_n=100)
+            if not symbols:
+                logger.debug("Intraday loop: empty universe, skipping cycle")
+                _stop_event.wait(_INTRADAY_INTERVAL)
+                continue
+
+            patterns = scan_intraday_patterns(symbols)
+            logger.info(
+                "Intraday scan: %d patterns from %d symbols",
+                len(patterns), len(symbols),
+            )
+
+            # Cache the full batch for the REST endpoint so the mobile
+            # Reversals card always has data, even if every pattern was
+            # already seen and not re-dispatched.
+            save_intraday_latest([p.to_dict() for p in patterns])
+
+            new_patterns = [
+                p for p in patterns
+                if f"{p.symbol}:{p.pattern_type}" not in seen_keys
+            ]
+            if new_patterns:
+                logger.info("Dispatching %d new intraday patterns", len(new_patterns))
+                try:
+                    result = dispatch_intraday_patterns(new_patterns)
+                    logger.info(
+                        "Intraday dispatch result: sms=%s push=%s",
+                        result.get("sms"), result.get("push"),
+                    )
+                except Exception as e:
+                    logger.warning("Intraday dispatch failed: %s", e)
+
+            # Mark all current patterns as seen for this session, so a
+            # restart mid-day doesn't re-fire them.
+            seen_keys.update(f"{p.symbol}:{p.pattern_type}" for p in patterns)
+            save_intraday_seen(seen_keys, seen_date)
+        except Exception as e:
+            logger.warning("Intraday loop iteration failed: %s", e)
+
+        _stop_event.wait(_INTRADAY_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start background refresh thread
     thread = threading.Thread(target=_refresh_loop, daemon=True)
     thread.start()
+    # Intraday-pattern scan thread (5-min cadence, market hours only)
+    threading.Thread(target=_intraday_scan_loop, daemon=True).start()
     # Warm the yfinance cache in a separate thread so startup is not blocked
     threading.Thread(target=_warm_profile_cache_on_startup, daemon=True).start()
     yield

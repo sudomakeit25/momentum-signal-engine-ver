@@ -13,6 +13,7 @@ import {
   api,
   BreadthResponse,
   DarkPoolScanRow,
+  IntradayPattern,
   OptionsFlowScanRow,
   RegimeResponse,
   SectorFlow,
@@ -49,6 +50,11 @@ export default function MarketScreen() {
     queryKey: ["ipos"],
     queryFn: api.ipoCalendar,
   });
+  const intraday = useQuery({
+    queryKey: ["intraday-patterns"],
+    queryFn: api.intradayPatterns,
+    refetchInterval: 60_000,
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -60,6 +66,10 @@ export default function MarketScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <IntradayCard
+          data={intraday.data?.patterns ?? []}
+          loading={intraday.isLoading}
+        />
         <RegimeCard data={regime.data} loading={regime.isLoading} />
         <BreadthCard data={breadth.data} loading={breadth.isLoading} />
         <SectorCard data={sectors.data} loading={sectors.isLoading} />
@@ -77,6 +87,94 @@ export default function MarketScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function IntradayCard({
+  data,
+  loading,
+}: {
+  data: IntradayPattern[];
+  loading: boolean;
+}) {
+  if (loading) return <CardSkeleton title="INTRADAY REVERSALS" />;
+  if (!data || data.length === 0) {
+    // Hide entirely outside market hours / before any patterns are
+    // detected. Avoids a stale empty card sitting at the top of the tab.
+    return null;
+  }
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>INTRADAY REVERSALS</Text>
+      {data.slice(0, 10).map((p, i) => {
+        const glyph = patternGlyph(p.pattern_type);
+        const actionColor =
+          p.action === "BUY" ? colors.bullish : colors.bearish;
+        return (
+          <Link
+            key={`${p.symbol}-${p.pattern_type}-${i}`}
+            href={`/instrument/${p.symbol}`}
+            asChild
+          >
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  paddingVertical: 6,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderSubtle,
+                },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <View style={styles.row}>
+                <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                  <Text style={[styles.mono, { color: actionColor, fontWeight: "700" }]}>
+                    {glyph}
+                  </Text>
+                  <Text style={styles.mono}>{p.symbol}</Text>
+                </View>
+                <Text style={styles.mono}>${p.trigger_price.toFixed(2)}</Text>
+              </View>
+              <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>
+                {patternLabel(p.pattern_type)} · move {p.move_pct >= 0 ? "+" : ""}
+                {p.move_pct.toFixed(1)}% · now {p.recovery_pct >= 0 ? "+" : ""}
+                {p.recovery_pct.toFixed(1)}% off extreme
+              </Text>
+            </Pressable>
+          </Link>
+        );
+      })}
+    </View>
+  );
+}
+
+function patternGlyph(t: string): string {
+  switch (t) {
+    case "v_reversal":
+      return "V↑";
+    case "inverted_v":
+      return "Λ↓";
+    case "breakdown":
+      return "↓↓";
+    case "breakout":
+      return "↑↑";
+    default:
+      return "";
+  }
+}
+
+function patternLabel(t: string): string {
+  switch (t) {
+    case "v_reversal":
+      return "V-reversal";
+    case "inverted_v":
+      return "Inverted V";
+    case "breakdown":
+      return "Breakdown";
+    case "breakout":
+      return "Breakout";
+    default:
+      return t;
+  }
 }
 
 function RegimeCard({

@@ -15,6 +15,12 @@ from src.data.cache import Cache
 
 _cache = Cache()
 
+# Short-lived in-memory cache for intraday bars. Keyed by the same string
+# as the on-disk cache but never persisted — minute/5-min data turns stale
+# fast and reusing it across restarts would defeat the point.
+_intraday_cache: dict[str, tuple[float, dict]] = {}
+_INTRADAY_TTL_SECONDS = 60
+
 _STOCK_CHUNK_SIZE = 200  # Alpaca URL length safe limit for batched bars
 
 
@@ -219,6 +225,91 @@ def get_multi_bars(
         individual_key = f"bars_{sym}_{timeframe}_{days}"
         _cache.set(individual_key, sym_df)
 
+    return result
+
+
+def get_intraday_multi_bars(
+    symbols: list[str],
+    minutes_back: int = 120,
+    timeframe_minutes: int = 5,
+) -> dict[str, pd.DataFrame]:
+    """Batch-fetch recent intraday bars for many symbols.
+
+    Used by the intraday-pattern scanner. Default 5-minute bars over the
+    last ~2 hours is enough to detect V-reversals, blow-off tops, and
+    sustained breakdowns without pulling a full day of data per symbol.
+
+    Cache TTL is short (60s) — multiple pattern detectors share the same
+    fetched bars within a single scan cycle.
+    """
+    if not symbols:
+        return {}
+
+    # Skip non-Alpaca symbols — Alpaca handles US equities; FMP intraday
+    # is a separate paid endpoint we don't currently use.
+    stock_symbols = [
+        s for s in symbols
+        if not _is_crypto(s) and not _use_fmp_historical(s)
+    ]
+    if not stock_symbols:
+        return {}
+
+    import time as _time
+    cache_key = f"intraday_{'_'.join(sorted(stock_symbols))}_{minutes_back}_{timeframe_minutes}"
+    cached = _intraday_cache.get(cache_key)
+    if cached is not None:
+        ts, data = cached
+        if _time.time() - ts < _INTRADAY_TTL_SECONDS:
+            return data
+
+    if timeframe_minutes == 1:
+        timeframe = TimeFrame.Minute
+    elif timeframe_minutes == 5:
+        from alpaca.data.timeframe import TimeFrameUnit
+        timeframe = TimeFrame(5, TimeFrameUnit.Minute)
+    elif timeframe_minutes == 15:
+        from alpaca.data.timeframe import TimeFrameUnit
+        timeframe = TimeFrame(15, TimeFrameUnit.Minute)
+    else:
+        from alpaca.data.timeframe import TimeFrameUnit
+        timeframe = TimeFrame(timeframe_minutes, TimeFrameUnit.Minute)
+
+    # Pad the lookback so we get enough bars even if the first few are
+    # outside the requested window after data alignment.
+    start = datetime.now() - timedelta(minutes=minutes_back + timeframe_minutes * 2)
+
+    client = _get_data_client()
+    result: dict[str, pd.DataFrame] = {}
+
+    def _fetch_chunk(chunk: list[str]) -> tuple[list[str], pd.DataFrame]:
+        request = StockBarsRequest(
+            symbol_or_symbols=chunk,
+            timeframe=timeframe,
+            start=start,
+            adjustment=Adjustment.ALL,
+        )
+        return chunk, client.get_stock_bars(request).df
+
+    chunks = [
+        stock_symbols[i : i + _STOCK_CHUNK_SIZE]
+        for i in range(0, len(stock_symbols), _STOCK_CHUNK_SIZE)
+    ]
+    with ThreadPoolExecutor(max_workers=min(8, len(chunks))) as pool:
+        for chunk, df in pool.map(_fetch_chunk, chunks):
+            if df.empty:
+                continue
+            if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:
+                for sym in df.index.get_level_values("symbol").unique():
+                    sym_df = df.xs(sym, level="symbol").sort_index()
+                    sym_df.index = pd.to_datetime(sym_df.index, utc=True)
+                    result[sym] = sym_df
+            elif len(chunk) == 1:
+                df.index = pd.to_datetime(df.index, utc=True)
+                result[chunk[0]] = df.sort_index()
+
+    # Short TTL — pattern scanner runs every ~5 min, but multiple
+    # detectors within a cycle should share the same fetch.
+    _intraday_cache[cache_key] = (_time.time(), result)
     return result
 
 

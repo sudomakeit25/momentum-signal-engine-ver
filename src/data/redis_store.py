@@ -285,6 +285,73 @@ def save_seen_signals(keys: set[str], date_str: str) -> bool:
         return False
 
 
+# --- Intraday-pattern session dedup ---
+# Distinct from the daily _SEEN_SIGNALS_KEY because the dedup grain
+# differs: intraday keys include pattern_type (V-reversal vs breakdown
+# on the same symbol can both fire) and reset every trading day.
+
+_INTRADAY_SEEN_KEY = "mse:intraday_seen"
+_INTRADAY_SEEN_DATE_KEY = "mse:intraday_seen_date"
+_INTRADAY_LATEST_KEY = "mse:intraday_latest"
+
+
+def load_intraday_seen() -> tuple[set[str], str]:
+    redis = _get_redis()
+    if not redis:
+        return set(), ""
+    try:
+        raw = redis.get(_INTRADAY_SEEN_KEY)
+        date = redis.get(_INTRADAY_SEEN_DATE_KEY) or ""
+        if not raw:
+            return set(), str(date)
+        keys = json.loads(raw) if isinstance(raw, str) else raw
+        return set(keys or []), str(date)
+    except Exception as e:
+        logger.warning("Failed to load intraday seen: %s", e)
+        return set(), ""
+
+
+def save_intraday_seen(keys: set[str], date_str: str) -> bool:
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        redis.set(_INTRADAY_SEEN_KEY, json.dumps(sorted(keys)))
+        redis.set(_INTRADAY_SEEN_DATE_KEY, date_str)
+        return True
+    except Exception as e:
+        logger.warning("Failed to save intraday seen: %s", e)
+        return False
+
+
+def save_intraday_latest(patterns: list[dict]) -> bool:
+    """Cache the most recent batch of detections for the REST endpoint."""
+    redis = _get_redis()
+    if not redis:
+        return False
+    try:
+        redis.set(_INTRADAY_LATEST_KEY, json.dumps(patterns))
+        return True
+    except Exception as e:
+        logger.warning("Failed to save intraday latest: %s", e)
+        return False
+
+
+def load_intraday_latest() -> list[dict]:
+    redis = _get_redis()
+    if not redis:
+        return []
+    try:
+        raw = redis.get(_INTRADAY_LATEST_KEY)
+        if not raw:
+            return []
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        return data or []
+    except Exception as e:
+        logger.warning("Failed to load intraday latest: %s", e)
+        return []
+
+
 # --- Expo push tokens (mobile app) ---
 
 def get_push_tokens() -> dict[str, dict]:
