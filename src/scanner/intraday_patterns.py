@@ -194,7 +194,7 @@ def detect_sustained_move(
     symbol: str,
     *,
     min_move_pct: float = DEFAULT_MIN_MOVE_PCT,
-    max_recovery_frac: float = 0.3,
+    max_recovery_frac: float = 0.15,
 ) -> IntradayPattern | None:
     """Sharp move from the window's start that is NOT being reversed.
 
@@ -202,6 +202,11 @@ def detect_sustained_move(
     window, with the price now significantly below it and within
     max_recovery_frac of the lowest low. Mirror logic for breakout.
     Fires SELL on breakdown, BUY on breakout.
+
+    `max_recovery_frac` was 0.30 originally but RKLB on 2026-04-23 fired
+    a "breakout" with 23.7% pullback off the rally peak — visually a
+    fading bounce, not a sustained move. Tightening to 0.15 requires
+    the price to still be near the extreme.
     """
     if df is None or len(df) < 6:
         return None
