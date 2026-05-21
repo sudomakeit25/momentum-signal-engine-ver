@@ -102,7 +102,7 @@ def mobile_test_push():
 def scan(
     top: int = Query(default=20, ge=1, le=100, description="Number of top results"),
     min_price: float = Query(default=5.0, ge=0),
-    max_price: float = Query(default=500.0, ge=0),
+    max_price: float = Query(default=10_000.0, ge=0),
     min_volume: int = Query(default=500_000, ge=0),
 ):
     """Run momentum scanner on the default universe."""
@@ -1642,7 +1642,7 @@ def screener_filters():
 @router.get("/screener/scan")
 def screener_scan(
     min_price: float = Query(default=5),
-    max_price: float = Query(default=500),
+    max_price: float = Query(default=10_000),
     min_volume: int = Query(default=500_000),
     min_score: float = Query(default=0),
     min_rs: float = Query(default=0),
@@ -2344,7 +2344,7 @@ def natural_language_screen(q: str = Query(..., description="Natural language qu
     from src.scanner.custom_screener import run_custom_scan
     results = run_custom_scan(
         min_price=filters.get("min_price", 5),
-        max_price=filters.get("max_price", 500),
+        max_price=filters.get("max_price", 10_000),
         min_volume=filters.get("min_volume", 500000),
         min_score=filters.get("min_score", 0),
         min_rs=filters.get("min_rs", 0),
