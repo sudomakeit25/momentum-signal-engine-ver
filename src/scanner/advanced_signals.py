@@ -246,42 +246,120 @@ def scan_unusual_volume(min_ratio: float = 3.0) -> list[dict]:
 
 # --- 4. Short Squeeze Scanner ---
 
-def scan_short_squeeze() -> list[dict]:
-    """Find stocks with high short volume + rising price (squeeze candidates)."""
-    from src.data.finra_client import get_short_volume_batch
+def compute_squeeze_score(
+    days_to_cover: float,
+    price_change_5d: float,
+    si_change_pct: float,
+    recent_short_vol_pct: float,
+) -> float:
+    """Composite 0-100 short-squeeze score from the four real ingredients.
+
+    The squeeze setup is: shorts are trapped (high days-to-cover) AND the
+    price is rising (forcing them to cover). Short-interest building into
+    the rise and elevated daily short volume add confirmation.
+
+      - 40 pts: days-to-cover, the primary fuel. Saturates at 10 days.
+      - 35 pts: rising price, the trigger that forces covering. Saturates
+                at a +15% 5-day move.
+      - 15 pts: daily short volume above the ~40% liquid-stock baseline,
+                saturating 20 points higher. Confirms shorting is active.
+      - 10 pts: short interest rose vs the prior settlement period — shorts
+                doubling down right before the squeeze = more trapped fuel.
+    """
+    dtc = 40.0 * min(max(days_to_cover, 0.0) / 10.0, 1.0)
+    price = 35.0 * min(max(price_change_5d, 0.0) / 15.0, 1.0)
+    vol = 15.0 * min(max(recent_short_vol_pct - 40.0, 0.0) / 20.0, 1.0)
+    building = 10.0 if si_change_pct > 0 else 0.0
+    return round(dtc + price + vol + building, 1)
+
+
+def scan_short_squeeze(
+    *,
+    min_days_to_cover: float = 3.0,
+    min_price_change_5d: float = 2.0,
+) -> list[dict]:
+    """Find short-squeeze candidates using real short interest, not the
+    daily short-volume proxy.
+
+    Gate: a stock must have at least `min_days_to_cover` days of short
+    interest to buy back (real squeeze fuel, from FINRA's bi-monthly
+    consolidated short interest) AND be rising at least
+    `min_price_change_5d`% over 5 days (the trigger forcing covers).
+    Candidates are ranked by a composite squeeze score.
+
+    All numeric outputs are native Python int/float (no numpy types) so
+    the FastAPI response serializes cleanly.
+    """
+    from src.data.finra_client import get_short_interest, get_short_volume_batch
 
     cache_key = "short_squeeze_scan"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
 
-    symbols = [s for s in get_default_universe() if "/" not in s]
-    batch = get_short_volume_batch(symbols, days=10)
-    results = []
+    si_cycle = get_short_interest()
+    if not si_cycle:
+        logger.info("Short squeeze scan: no short interest cycle available")
+        return []
 
-    for sym in symbols:
-        entries = batch.get(sym)
-        if not entries or len(entries) < 5:
+    symbols = [s for s in get_default_universe() if "/" not in s]
+    # Pre-filter to names that clear the days-to-cover bar before doing any
+    # price fetches — keeps the Alpaca call count small.
+    candidates = [
+        s for s in symbols
+        if si_cycle.get(s.upper(), {}).get("days_to_cover", 0.0) >= min_days_to_cover
+    ]
+    if not candidates:
+        return []
+
+    # Daily short volume for confirmation (batch, one set of FINRA fetches).
+    vol_batch = get_short_volume_batch(candidates, days=10)
+
+    results = []
+    for sym in candidates:
+        si = si_cycle.get(sym.upper())
+        if not si:
             continue
         try:
             df = alpaca_client.get_bars(sym, days=20)
-            if df is None or len(df) < 10:
+            if df is None or len(df) < 6:
                 continue
 
-            avg_short_pct = np.mean([e["short_pct"] for e in entries])
-            recent_short_pct = np.mean([e["short_pct"] for e in entries[-3:]])
-            price_change = (float(df["close"].iloc[-1]) - float(df["close"].iloc[-5])) / float(df["close"].iloc[-5]) * 100
+            last_close = float(df["close"].iloc[-1])
+            close_5d_ago = float(df["close"].iloc[-5])
+            if close_5d_ago <= 0:
+                continue
+            price_change_5d = (last_close - close_5d_ago) / close_5d_ago * 100
+            if price_change_5d < min_price_change_5d:
+                continue
 
-            # Squeeze: high short interest + price rising
-            if avg_short_pct > 45 and price_change > 2:
-                results.append({
-                    "symbol": sym,
-                    "avg_short_pct": round(avg_short_pct, 1),
-                    "recent_short_pct": round(recent_short_pct, 1),
-                    "price_change_5d": round(price_change, 2),
-                    "price": round(float(df["close"].iloc[-1]), 2),
-                    "squeeze_score": round(avg_short_pct * price_change / 100, 2),
-                })
+            entries = vol_batch.get(sym, [])
+            recent_short_vol_pct = (
+                float(np.mean([e["short_pct"] for e in entries[-3:]]))
+                if entries else 0.0
+            )
+
+            days_to_cover = float(si["days_to_cover"])
+            si_change_pct = float(si["change_pct"])
+
+            score = compute_squeeze_score(
+                days_to_cover=days_to_cover,
+                price_change_5d=price_change_5d,
+                si_change_pct=si_change_pct,
+                recent_short_vol_pct=recent_short_vol_pct,
+            )
+
+            results.append({
+                "symbol": sym,
+                "price": round(last_close, 2),
+                "days_to_cover": round(days_to_cover, 2),
+                "shares_short": int(si["shares_short"]),
+                "si_change_pct": round(si_change_pct, 1),
+                "price_change_5d": round(price_change_5d, 2),
+                "recent_short_vol_pct": round(recent_short_vol_pct, 1),
+                "settlement_date": si["settlement_date"],
+                "squeeze_score": score,
+            })
         except Exception:
             continue
 
