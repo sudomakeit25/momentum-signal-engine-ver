@@ -10,6 +10,7 @@ import { useWatchlist } from "@/hooks/use-watchlist";
 import { BreadthWidget } from "@/components/scanner/breadth-widget";
 import { IntradayReversalsWidget } from "@/components/scanner/intraday-reversals";
 import { CyclicalsWidget } from "@/components/scanner/cyclicals-widget";
+import { SqueezeWidget } from "@/components/scanner/squeeze-widget";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -83,6 +84,7 @@ export default function ScannerPage() {
 
       <BreadthWidget />
       <IntradayReversalsWidget />
+      <SqueezeWidget />
       <CyclicalsWidget />
 
       <div className="flex flex-wrap gap-2">

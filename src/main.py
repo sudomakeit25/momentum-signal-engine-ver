@@ -336,6 +336,17 @@ def _refresh_loop():
                     )
             except Exception as e:
                 logger.warning("Cyclical scan failed: %s", e)
+
+            # Warm the short-squeeze scan so the web/mobile widgets get an
+            # instant cache hit. scan_short_squeeze has its own internal
+            # file cache, so this is cheap once warm (it recomputes only
+            # after that cache's TTL expires).
+            try:
+                from src.scanner.advanced_signals import scan_short_squeeze
+                squeeze = scan_short_squeeze()
+                logger.info("Short squeeze scan: %d candidates", len(squeeze))
+            except Exception as e:
+                logger.warning("Short squeeze scan failed: %s", e)
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 
