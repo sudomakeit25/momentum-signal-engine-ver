@@ -19,6 +19,7 @@ import {
   RegimeResponse,
   SectorFlow,
   SignalSummary,
+  SqueezeCandidate,
 } from "../../src/lib/api";
 import { colors, radius, spacing } from "../../src/lib/theme";
 
@@ -61,6 +62,11 @@ export default function MarketScreen() {
     queryFn: api.cyclicals,
     refetchInterval: 10 * 60_000,
   });
+  const squeeze = useQuery({
+    queryKey: ["short-squeeze"],
+    queryFn: api.shortSqueeze,
+    refetchInterval: 10 * 60_000,
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -75,6 +81,10 @@ export default function MarketScreen() {
         <IntradayCard
           data={intraday.data?.patterns ?? []}
           loading={intraday.isLoading}
+        />
+        <SqueezeCard
+          data={squeeze.data ?? []}
+          loading={squeeze.isLoading}
         />
         <CyclicalsCard
           data={cyclicals.data?.cyclicals ?? []}
@@ -185,6 +195,69 @@ function patternLabel(t: string): string {
     default:
       return t;
   }
+}
+
+function SqueezeCard({
+  data,
+  loading,
+}: {
+  data: SqueezeCandidate[];
+  loading: boolean;
+}) {
+  if (loading) return <CardSkeleton title="SHORT SQUEEZE" />;
+  if (!data || data.length === 0) return null;
+  const settlement = data[0]?.settlement_date;
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>
+        SHORT SQUEEZE{settlement ? ` · SI ${settlement}` : ""}
+      </Text>
+      {data.slice(0, 10).map((c) => {
+        const scoreColor =
+          c.squeeze_score >= 70
+            ? colors.bearish
+            : c.squeeze_score >= 50
+            ? colors.amber
+            : colors.textMuted;
+        return (
+          <Link key={c.symbol} href={`/instrument/${c.symbol}`} asChild>
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  paddingVertical: 8,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderSubtle,
+                },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <View style={styles.row}>
+                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                  <Text style={styles.mono}>{c.symbol}</Text>
+                  <Text style={[styles.muted, { fontSize: 11 }]}>
+                    ${c.price.toFixed(2)}
+                  </Text>
+                </View>
+                <Text style={{ color: scoreColor, fontSize: 14, fontWeight: "700" }}>
+                  {c.squeeze_score.toFixed(0)}
+                </Text>
+              </View>
+              <View style={[styles.row, { marginTop: 4 }]}>
+                <Text style={[styles.muted, { fontSize: 10 }]}>
+                  {c.days_to_cover.toFixed(1)}d to cover · SI{" "}
+                  {c.si_change_pct >= 0 ? "+" : ""}
+                  {c.si_change_pct.toFixed(1)}%
+                </Text>
+                <Text style={{ color: colors.bullish, fontSize: 10 }}>
+                  +{c.price_change_5d.toFixed(1)}% 5d
+                </Text>
+              </View>
+            </Pressable>
+          </Link>
+        );
+      })}
+    </View>
+  );
 }
 
 function CyclicalsCard({

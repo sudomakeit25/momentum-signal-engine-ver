@@ -50,10 +50,26 @@ const SIGNALS = [
   },
 ];
 
+const SQUEEZE = [
+  {
+    symbol: "WDAY",
+    price: 148.88,
+    days_to_cover: 6.16,
+    shares_short: 12_000_000,
+    si_change_pct: 2.9,
+    price_change_5d: 19.58,
+    recent_short_vol_pct: 66,
+    settlement_date: "2026-05-15",
+    squeeze_score: 84.6,
+  },
+];
+
 function routeFetch(url: string) {
   if (url.includes("/breadth")) return BREADTH;
   if (url.includes("/market/regime")) return REGIME;
   if (url.includes("/sectors/flow")) return SECTORS;
+  // Must be checked before the generic "/signals" branch below.
+  if (url.includes("/signals/short-squeeze")) return SQUEEZE;
   if (url.includes("/signals")) return SIGNALS;
   return [];
 }
@@ -76,5 +92,13 @@ describe("MarketScreen", () => {
     expect(await findByText(/Semiconductors/i)).toBeTruthy(); // sector
     expect(await findByText("NVDA")).toBeTruthy(); // signal symbol
     expect(await findByText(/momentum breakout/i)).toBeTruthy();
+  });
+
+  it("renders the short squeeze card", async () => {
+    const { findByText } = renderWithProviders(<MarketScreen />);
+    expect(await findByText(/SHORT SQUEEZE/i)).toBeTruthy();
+    expect(await findByText("WDAY")).toBeTruthy();
+    expect(await findByText(/6\.2d to cover/i)).toBeTruthy();
+    expect(await findByText("85")).toBeTruthy(); // rounded squeeze score
   });
 });

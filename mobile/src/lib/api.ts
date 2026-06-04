@@ -121,6 +121,9 @@ export const api = {
       "/scanner/cyclicals",
     ),
 
+  shortSqueeze: () =>
+    request<SqueezeCandidate[]>("/signals/short-squeeze"),
+
   // --- Stage 3: Utility endpoints ---
   alertsHistory: (limit = 100, enrich = false) =>
     request<AlertHistoryItem[]>("/alerts/history", { limit, enrich }),
@@ -550,6 +553,19 @@ export type Cyclical = {
   current_price: number;
   cyclical_score: number;
   bias: "BUY" | "SELL" | "HOLD" | string;
+};
+
+// --- Short squeeze ---
+export type SqueezeCandidate = {
+  symbol: string;
+  price: number;
+  days_to_cover: number;
+  shares_short: number;
+  si_change_pct: number;
+  price_change_5d: number;
+  recent_short_vol_pct: number;
+  settlement_date: string;
+  squeeze_score: number;
 };
 
 // --- Intraday patterns ---
