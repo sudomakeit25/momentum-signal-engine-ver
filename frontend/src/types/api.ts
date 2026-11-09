@@ -8,7 +8,28 @@ export type SetupType =
   | "flag"
   | "flat_base"
   | "tight_consolidation"
-  | "gap_up";
+  | "gap_up"
+  | "range_breakout"
+  | "vwap_rejection"
+  | "higher_low";
+
+export interface IntradayResult {
+  symbol: string;
+  price: number;
+  change_pct: number;
+  atr_pct: number;
+  rvol: number;
+  spread_pct: number | null;
+  volume: number;
+  avg_volume: number;
+  day_high: number;
+  day_low: number;
+  vwap_dist_pct: number;
+  score: number;
+  earnings_soon: boolean;
+  signals: Signal[];
+  setup_types: SetupType[];
+}
 
 export interface Signal {
   symbol: string;

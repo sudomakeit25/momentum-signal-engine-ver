@@ -18,6 +18,9 @@ class SetupType(str, Enum):
     FLAT_BASE = "flat_base"
     TIGHT_CONSOLIDATION = "tight_consolidation"
     GAP_UP = "gap_up"
+    RANGE_BREAKOUT = "range_breakout"
+    VWAP_REJECTION = "vwap_rejection"
+    HIGHER_LOW = "higher_low"
 
 
 class StockBar(BaseModel):
@@ -60,6 +63,25 @@ class ScanResult(BaseModel):
     score: float
     signals: list[Signal]
     setup_types: list[SetupType]
+
+
+class IntradayResult(BaseModel):
+    """One row of the intraday movers screener (5-min bar based)."""
+    symbol: str
+    price: float
+    change_pct: float          # today vs yesterday close
+    atr_pct: float             # daily ATR14 as % of price
+    rvol: float                # time-of-day adjusted relative volume
+    spread_pct: float | None = None  # (ask-bid)/mid * 100, None if quote unavailable
+    volume: int                # today's cumulative volume
+    avg_volume: int            # 20-day average daily volume
+    day_high: float
+    day_low: float
+    vwap_dist_pct: float       # % distance of last price from session VWAP
+    score: float
+    earnings_soon: bool = False  # reports today/tomorrow (FMP calendar)
+    signals: list[Signal] = []
+    setup_types: list[SetupType] = []
 
 
 class PositionSize(BaseModel):

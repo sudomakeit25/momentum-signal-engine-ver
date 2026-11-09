@@ -381,7 +381,8 @@ def _intraday_scan_loop():
         save_intraday_latest,
     )
     from src.scanner.intraday_patterns import scan_intraday_patterns
-    from src.notifications.dispatcher import dispatch_intraday_patterns
+    from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
+    from src.notifications.dispatcher import dispatch_alerts, dispatch_intraday_patterns
     from datetime import datetime
 
     seen_keys, seen_date = load_intraday_seen()
@@ -442,6 +443,41 @@ def _intraday_scan_loop():
             # restart mid-day doesn't re-fire them.
             seen_keys.update(f"{p.symbol}:{p.pattern_type}" for p in patterns)
             save_intraday_seen(seen_keys, seen_date)
+
+            # --- Intraday movers screen (0.5-1% scalp framework) ---
+            # Risk-managed setups (range break / VWAP reclaim-reject /
+            # higher low) with entry/stop/target. Shares this loop's
+            # cadence and Redis seen-state; "M:"-prefixed keys keep its
+            # dedup grain (symbol+setup+direction per day) separate from
+            # the pattern keys above.
+            try:
+                movers = scan_intraday_movers(symbols=symbols)
+                mover_signals = [s for r in movers for s in r.signals]
+                new_setups = [
+                    s for s in mover_signals
+                    if f"M:{s.symbol}:{s.setup_type.value}:{s.action.value}"
+                    not in seen_keys
+                ]
+                logger.info(
+                    "Intraday movers: %d rows, %d setups (%d new)",
+                    len(movers), len(mover_signals), len(new_setups),
+                )
+                if new_setups:
+                    try:
+                        result = dispatch_alerts(new_setups)
+                        logger.info(
+                            "Movers dispatch result: webhook=%s sms=%s",
+                            result.get("webhook"), result.get("sms"),
+                        )
+                    except Exception as e:
+                        logger.warning("Movers dispatch failed: %s", e)
+                seen_keys.update(
+                    f"M:{s.symbol}:{s.setup_type.value}:{s.action.value}"
+                    for s in mover_signals
+                )
+                save_intraday_seen(seen_keys, seen_date)
+            except Exception as e:
+                logger.warning("Intraday movers screen failed: %s", e)
         except Exception as e:
             logger.warning("Intraday loop iteration failed: %s", e)
 

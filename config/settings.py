@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     default_risk_pct: float = 2.0
     min_rr_ratio: float = 2.0
 
+    # Intraday movers screener defaults (0.5-1% scalp framework)
+    intraday_min_price: float = 20.0          # tighter spreads above $20
+    intraday_min_avg_volume: int = 2_000_000  # 20-day average daily volume
+    intraday_min_change_pct: float = 2.0      # |today's % change| — movement begets movement
+    intraday_min_rvol: float = 1.5            # time-adjusted relative volume
+    intraday_max_spread_pct: float = 0.1      # spread + slippage must stay < 0.1%
+    intraday_min_rr: float = 1.5              # checklist: risk/reward at least 1:1.5
+    intraday_box_bars: int = 8                # 8 x 5min = 40 min consolidation box
+    intraday_top_n: int = 25
+
     # Twilio SMS
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

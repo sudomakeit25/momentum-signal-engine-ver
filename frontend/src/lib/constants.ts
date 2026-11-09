@@ -9,6 +9,9 @@ export const SETUP_TYPE_COLORS: Record<SetupType, string> = {
   flat_base: "bg-rose-500/20 text-rose-400 border-rose-500/30",
   tight_consolidation: "bg-slate-500/20 text-slate-400 border-slate-500/30",
   gap_up: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  range_breakout: "bg-teal-500/20 text-teal-400 border-teal-500/30",
+  vwap_rejection: "bg-red-500/20 text-red-400 border-red-500/30",
+  higher_low: "bg-lime-500/20 text-lime-400 border-lime-500/30",
 };
 
 export const SETUP_TYPE_LABELS: Record<SetupType, string> = {
@@ -20,6 +23,9 @@ export const SETUP_TYPE_LABELS: Record<SetupType, string> = {
   flat_base: "Flat Base",
   tight_consolidation: "Tight Range",
   gap_up: "Gap Up",
+  range_breakout: "Range Break",
+  vwap_rejection: "VWAP Reject",
+  higher_low: "Higher Low",
 };
 
 export const SCAN_REFRESH_MS = 30_000;
