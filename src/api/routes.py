@@ -35,6 +35,27 @@ def health_check():
     return {"status": "ok", "service": "momentum-signal-engine"}
 
 
+_data_probe_at = 0.0
+
+
+@router.get("/health/data")
+def health_data(probe: bool = Query(default=False)):
+    """Which earnings source answered last, what Nasdaq's calendar last said,
+    and what Financial Modeling Prep last answered per endpoint, including
+    its own refusal text (wrong plan, retired route, bad key). No secrets.
+    `probe=true` runs one earnings lookup first, at most once a minute."""
+    from src.data import earnings_calendar, fmp_client
+    global _data_probe_at
+    probed = None
+    if probe and time.time() - _data_probe_at >= 60:
+        _data_probe_at = time.time()
+        asked = ["NVDA", "AAPL", "MU"]
+        reporting, known = earnings_calendar.reporting_soon(asked)
+        probed = {"asked": asked, "known": sorted(known), "reporting": sorted(reporting)}
+    return {"probed": probed, "earnings": earnings_calendar.status(),
+            "fmp": fmp_client.status()}
+
+
 @router.get("/intraday-screener", response_model=list[IntradayResult])
 def intraday_screener(
     top: int = Query(default=25, ge=1, le=100),
@@ -227,16 +248,9 @@ def get_signals(
     return all_signals[:top]
 
 
-@router.get("/signals/{symbol}", response_model=list[Signal])
-def get_symbol_signals(symbol: str):
-    """Get signals for a specific stock."""
-    df = client.get_bars(symbol.upper(), days=200)
-    if df is None or len(df) < 50:
-        return []
-    try:
-        return generate_signals(df, symbol.upper())
-    except Exception:
-        return []
+# NOTE: "/signals/{symbol}" is registered at the very end of this file. It
+# matches every one-segment path under /signals/, so placed here it would
+# swallow /signals/vix, /signals/short-squeeze and the other fixed routes.
 
 
 @router.get("/chart/{symbol}", response_model=ChartData)
@@ -3003,4 +3017,29 @@ def profile_screener_run(
         min_cap=min_cap,
         custom_tickers=custom,
     )
-    return {"results": results, "count": len(results), "sector": sector}
+    # Tell the page when the data source failed, so "no matches" and "no
+    # data" do not look the same.
+    from src.scanner.profile_screener import last_load_meta
+    return {"results": results, "count": len(results), "sector": sector,
+            **last_load_meta(sector, custom)}
+
+
+
+# --- Per-symbol signals: keep this LAST ---
+# The wildcard below matches any one-segment path under /signals/. Routes are
+# tried in registration order, so every fixed /signals/<name> route must be
+# registered before it (tests/test_route_order.py enforces this).
+
+@router.get("/signals/{symbol}", response_model=list[Signal])
+def get_symbol_signals(symbol: str):
+    """Get signals for a specific stock."""
+    try:
+        df = client.get_bars(symbol.upper(), days=200)
+    except Exception:
+        return []   # unknown or malformed symbol: the data provider refused it
+    if df is None or len(df) < 50:
+        return []
+    try:
+        return generate_signals(df, symbol.upper())
+    except Exception:
+        return []

@@ -147,7 +147,10 @@ export function useProfileScreenerRun(
     queryKey: ["profile-screener-run", params],
     queryFn: () => apiFetch<Record<string, unknown>>("/profile-screener/run", params),
     enabled,
-    staleTime: 30 * 60 * 1000,
+    // Good data is kept 30 minutes; a failed load is retried after a minute
+    // instead of being remembered as an empty result.
+    staleTime: (query) =>
+      query.state.data?.data_ok === false ? 60 * 1000 : 30 * 60 * 1000,
   });
 }
 

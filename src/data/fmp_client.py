@@ -2,6 +2,12 @@
 
 Free tier: 250 calls/day. Provides earnings calendar, EPS surprises,
 analyst estimates, and insider trading data.
+
+API versions. FMP retired /api/v3/ on 2025-08-31: those routes return 403
+for every key except legacy subscriptions. The earnings calendar and the
+company screener here use the current /stable/ API. The remaining functions
+still call v3 and only work with a legacy key; `status()` shows which calls
+are being refused so that is visible instead of silently empty.
 """
 
 import logging
@@ -18,7 +24,89 @@ logger = logging.getLogger("mse.fmp")
 
 _cache = Cache()
 _limiter = RateLimiter(max_calls=240, period_seconds=86400)  # 240/day (10 buffer)
-_BASE = "https://financialmodelingprep.com/api/v3"
+_BASE = "https://financialmodelingprep.com/api/v3"      # legacy keys only
+_STABLE = "https://financialmodelingprep.com/stable"
+
+# Last outcome per endpoint, for status(): {endpoint: {ok, status, message, rows, at}}
+_outcomes: dict[str, dict] = {}
+
+
+def _record(endpoint: str, status_code: int, body, ok: bool) -> None:
+    """Remember what FMP last answered for an endpoint. FMP explains refusals
+    in an "Error Message" field (wrong plan, legacy-only, bad key)."""
+    message = ""
+    rows = 0
+    if isinstance(body, dict):
+        message = str(body.get("Error Message") or body.get("message") or "")
+    elif isinstance(body, list):
+        rows = len(body)
+    elif isinstance(body, str):
+        message = body
+    key = settings.fmp_api_key or ""
+    if key:
+        message = message.replace(key, "***")
+    _outcomes[endpoint] = {
+        "ok": ok,
+        "status": status_code,
+        "message": message[:300],
+        "rows": rows,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def status() -> dict:
+    """What FMP last answered, per endpoint. Contains no secrets."""
+    return {"configured": bool(settings.fmp_api_key), "endpoints": dict(_outcomes)}
+
+
+def _request(base: str, endpoint: str, params: dict | None, timeout: int = 15):
+    """One GET to FMP. Returns parsed JSON on HTTP 200, else None. Always
+    records the outcome."""
+    query = dict(params or {})
+    query["apikey"] = settings.fmp_api_key
+    try:
+        resp = requests.get(f"{base}{endpoint}", params=query, timeout=timeout)
+    except Exception as e:
+        logger.warning("FMP error for %s: %s", endpoint, e)
+        _record(endpoint, 0, f"request failed: {type(e).__name__}", ok=False)
+        return None
+    try:
+        body = resp.json()
+    except Exception:
+        body = (resp.text or "")[:300]
+    if resp.status_code != 200:
+        _record(endpoint, resp.status_code, body, ok=False)
+        logger.warning(
+            "FMP %s returned %d: %s", endpoint, resp.status_code,
+            _outcomes[endpoint]["message"] or "(no message)",
+        )
+        return None
+    # FMP sometimes answers 200 with an error object instead of data
+    if isinstance(body, dict) and body.get("Error Message"):
+        _record(endpoint, resp.status_code, body, ok=False)
+        logger.warning("FMP %s refused: %s", endpoint, _outcomes[endpoint]["message"])
+        return None
+    _record(endpoint, resp.status_code, body, ok=True)
+    return body
+
+
+def _get_stable(endpoint: str, params: dict | None = None, cache_key: str | None = None,
+                timeout: int = 15) -> list | dict | None:
+    """Rate-limited, cached GET against the current /stable/ API."""
+    if not settings.fmp_api_key:
+        logger.warning("FMP API key not configured")
+        return None
+    if cache_key:
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+    if not _limiter.try_acquire():
+        logger.warning("FMP rate limit reached (240/day)")
+        return None
+    data = _request(_STABLE, endpoint, params, timeout=timeout)
+    if cache_key and data:
+        _cache.set(cache_key, data)
+    return data
 
 _universe_cache: tuple[float, list[str]] | None = None
 _UNIVERSE_TTL_SECONDS = 86400  # 24h
@@ -39,35 +127,122 @@ def _get(endpoint: str, params: dict | None = None, cache_key: str | None = None
         logger.warning("FMP rate limit reached (240/day)")
         return None
 
-    params = params or {}
-    params["apikey"] = settings.fmp_api_key
+    data = _request(_BASE, endpoint, params)
+    if cache_key and data:
+        _cache.set(cache_key, data)
+    return data
 
-    try:
-        resp = requests.get(f"{_BASE}{endpoint}", params=params, timeout=15)
-        if resp.status_code != 200:
-            logger.warning("FMP %s returned %d", endpoint, resp.status_code)
-            return None
-        data = resp.json()
-        if cache_key and data:
-            _cache.set(cache_key, data)
-        return data
-    except Exception as e:
-        logger.warning("FMP error for %s: %s", endpoint, e)
+
+def _normalize_earnings(item) -> dict | None:
+    """One calendar row in the shape the rest of the app reads.
+
+    The stable API renamed the actuals (epsActual, revenueActual) and dropped
+    the bmo/amc `time` field; the old names are accepted too, so a legacy
+    response still parses.
+    """
+    if not isinstance(item, dict):
         return None
+    symbol = item.get("symbol")
+    date = item.get("date")
+    if not symbol or not date or not isinstance(symbol, str):
+        return None
+    def first(*names):
+        for name in names:
+            if item.get(name) is not None:
+                return item[name]
+        return None
+    return {
+        "symbol": symbol.upper(),
+        "date": str(date)[:10],
+        "eps": first("epsActual", "eps"),
+        "epsEstimated": first("epsEstimated", "epsEstimate"),
+        "revenue": first("revenueActual", "revenue"),
+        "revenueEstimated": first("revenueEstimated", "revenueEstimate"),
+        "time": str(item.get("time") or ""),
+    }
 
 
 def get_earnings_calendar(days_ahead: int = 14) -> list[dict]:
-    """Get upcoming earnings dates for the next N days."""
+    """Upcoming earnings for the next N days, market-wide. Returns [] when the
+    calendar could not be read (callers treat an empty calendar as unknown)."""
     today = datetime.now().strftime("%Y-%m-%d")
     end = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-    cache_key = f"fmp_earnings_cal_{today}_{end}"
+    cache_key = f"fmp_stable_earnings_cal_{today}_{end}"
 
-    data = _get(
-        "/earning_calendar",
+    data = _get_stable(
+        "/earnings-calendar",
         params={"from": today, "to": end},
         cache_key=cache_key,
     )
-    return data or []
+    if not isinstance(data, list):
+        return []
+    rows = [r for r in (_normalize_earnings(x) for x in data) if r is not None]
+    return rows
+
+
+# symbol -> day on which FMP refused it (free plan covers a limited symbol
+# list). Remembered for the day so refusals do not eat the daily call budget.
+_symbol_refused: dict[str, str] = {}
+
+
+def get_symbol_next_earnings(symbol: str) -> tuple[bool, str | None]:
+    """(known, next earnings date) for one symbol.
+
+    known is False when FMP could not answer for this symbol: no key, rate
+    limit, network error, or a plan that does not cover the symbol. The date
+    is the earliest not-yet-reported earnings date from today on, or None.
+    """
+    symbol = symbol.upper()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _symbol_refused.get(symbol) == today:
+        return False, None
+    data = _get_stable(
+        "/earnings",
+        params={"symbol": symbol, "limit": 5},
+        cache_key=f"fmp_stable_symbol_earnings_{symbol}_{today}",
+    )
+    if not isinstance(data, list):
+        last = _outcomes.get("/earnings", {})
+        if last.get("status") in (401, 402, 403):
+            _symbol_refused[symbol] = today
+        return False, None
+    upcoming = sorted(
+        str(r.get("date"))[:10] for r in data
+        if isinstance(r, dict) and r.get("date") and r.get("epsActual") is None
+        and str(r.get("date"))[:10] >= today
+    )
+    return True, (upcoming[0] if upcoming else None)
+
+
+_SCREEN_PAGE = 1000
+_SCREEN_MAX_PAGES = 10
+
+
+def screen_companies(filters: dict, max_rows: int = 10_000) -> list[dict] | None:
+    """Rows from the stable company screener, or None if it could not be read.
+
+    Pages through results (the screener caps a single response) and stops
+    when a page adds nothing new, so a plan that ignores `page` cannot loop.
+    """
+    if not settings.fmp_api_key:
+        return None
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for page in range(_SCREEN_MAX_PAGES):
+        if not _limiter.try_acquire():
+            logger.warning("FMP rate limit reached during screener paging")
+            return rows or None
+        params = {**filters, "limit": min(_SCREEN_PAGE, max_rows), "page": page}
+        data = _request(_STABLE, "/company-screener", params, timeout=30)
+        if not isinstance(data, list):
+            return rows or None
+        fresh = [r for r in data if isinstance(r, dict) and r.get("symbol") not in seen]
+        for r in fresh:
+            seen.add(r.get("symbol"))
+        rows.extend(fresh)
+        if not fresh or len(data) < params["limit"] or len(rows) >= max_rows:
+            break
+    return rows[:max_rows]
 
 
 def get_earnings_surprises(symbol: str) -> list[dict]:
@@ -158,31 +333,26 @@ def get_liquid_universe(
         logger.warning("FMP API key not configured; liquid universe unavailable")
         return _universe_cache[1] if _universe_cache else []
 
-    if not _limiter.try_acquire():
-        logger.warning("FMP rate limit reached; returning stale universe")
-        return _universe_cache[1] if _universe_cache else []
+    # One request per exchange: the stable screener documents a single
+    # exchange per call, where v3 took a comma-separated list.
+    data: list[dict] = []
+    for exchange in ("NYSE", "NASDAQ", "AMEX"):
+        rows = screen_companies({
+            "marketCapMoreThan": market_cap_min,
+            "volumeMoreThan": volume_min,
+            "priceMoreThan": price_min,
+            "priceLowerThan": price_max,
+            "isActivelyTrading": "true",
+            "isEtf": "false",
+            "isFund": "false",
+            "exchange": exchange,
+        })
+        if rows:
+            data.extend(rows)
 
-    params = {
-        "marketCapMoreThan": market_cap_min,
-        "volumeMoreThan": volume_min,
-        "priceMoreThan": price_min,
-        "priceLowerThan": price_max,
-        "isActivelyTrading": "true",
-        "exchange": "nyse,nasdaq,amex",
-        "limit": 10000,
-        "apikey": settings.fmp_api_key,
-    }
-    try:
-        resp = requests.get(f"{_BASE}/stock-screener", params=params, timeout=30)
-        if resp.status_code != 200:
-            logger.warning("FMP stock-screener returned %d", resp.status_code)
-            return _universe_cache[1] if _universe_cache else []
-        data = resp.json()
-    except Exception as e:
-        logger.warning("FMP stock-screener error: %s", e)
-        return _universe_cache[1] if _universe_cache else []
-
-    if not isinstance(data, list):
+    if not data:
+        # Refused or empty: keep whatever universe we had (callers fall back
+        # to the hardcoded list when this is empty).
         return _universe_cache[1] if _universe_cache else []
 
     symbols: list[str] = []

@@ -149,6 +149,79 @@ PROFILES: dict[str, dict] = {
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_TTL = 30 * 60  # 30 minutes
+# Yahoo Finance sometimes refuses a server (rate limit / blocked address) and
+# every ticker fails. An empty answer is therefore remembered only briefly,
+# and never replaces the last good one.
+_EMPTY_TTL = 2 * 60
+_last_good: dict[str, tuple[float, list[dict]]] = {}
+_last_error: dict[str, str] = {}
+_fetch_error = ""   # error kind from the most recent _fetch_all, "" if it got data
+
+
+def _load(cache_key: str, tickers: list[str]) -> tuple[list[dict], dict]:
+    """Rows for a universe plus where they came from.
+
+    Returns (rows, meta) with meta = {data_ok, stale_minutes, note}. Fresh
+    rows are cached 30 minutes. If the fetch returns nothing, the last good
+    rows are served (marked stale) and the fetch is retried after 2 minutes.
+    """
+    now = time.time()
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        ttl = _CACHE_TTL if cached[1] else _EMPTY_TTL
+        if now - cached[0] < ttl:
+            rows = cached[1]
+        else:
+            cached = None
+    if cached is None:
+        rows = _fetch_all(tickers)
+        _cache[cache_key] = (now, rows)
+        if rows:
+            _last_good[cache_key] = (now, rows)
+            _last_error.pop(cache_key, None)
+        elif _fetch_error:
+            _last_error[cache_key] = _fetch_error
+
+    if rows:
+        return rows, {"data_ok": True, "stale_minutes": 0, "note": ""}
+    why = _last_error.get(cache_key) or "no data returned"
+    good = _last_good.get(cache_key)
+    if good is not None:
+        age = int((now - good[0]) / 60)
+        return good[1], {
+            "data_ok": False, "stale_minutes": age,
+            "note": f"Yahoo Finance is not answering ({why}); showing data from {age} min ago.",
+        }
+    return [], {
+        "data_ok": False, "stale_minutes": 0,
+        "note": f"Yahoo Finance is not answering ({why}); no data to show yet.",
+    }
+
+
+def last_load_meta(sector: str = "semiconductors", custom_tickers: str = "") -> dict:
+    """Meta for the universe `screen` would use, without fetching."""
+    tickers = _universe(sector, custom_tickers)
+    return _load_meta_only(f"{sector}:{','.join(sorted(tickers))}")
+
+
+def _load_meta_only(cache_key: str) -> dict:
+    cached = _cache.get(cache_key)
+    if cached is not None and cached[1]:
+        return {"data_ok": True, "stale_minutes": 0, "note": ""}
+    why = _last_error.get(cache_key) or "no data returned"
+    good = _last_good.get(cache_key)
+    if good is not None:
+        age = int((time.time() - good[0]) / 60)
+        return {"data_ok": False, "stale_minutes": age,
+                "note": f"Yahoo Finance is not answering ({why}); showing data from {age} min ago."}
+    return {"data_ok": False, "stale_minutes": 0,
+            "note": f"Yahoo Finance is not answering ({why}); no data to show yet."}
+
+
+def _universe(sector: str, custom_tickers: str) -> list[str]:
+    if custom_tickers.strip():
+        return [t.strip().upper() for t in custom_tickers.split(",") if t.strip()]
+    return SECTORS.get(sector, SECTORS["semiconductors"])
 
 
 def list_profiles() -> list[dict]:
@@ -174,14 +247,14 @@ def warm_cache(sectors: tuple[str, ...] = WARMUP_SECTORS) -> int:
         if not tickers:
             continue
         cache_key = f"{sec}:{','.join(sorted(tickers))}"
-        now = time.time()
-        if cache_key in _cache and now - _cache[cache_key][0] < _CACHE_TTL:
+        cached = _cache.get(cache_key)
+        if cached is not None and cached[1] and time.time() - cached[0] < _CACHE_TTL:
             continue  # still fresh
         try:
-            rows = _fetch_all(tickers)
-            _cache[cache_key] = (now, rows)
-            total += len(rows)
-            logger.info("warmed profile cache: sector=%s rows=%d", sec, len(rows))
+            rows, meta = _load(cache_key, tickers)
+            fresh = len(rows) if meta["data_ok"] else 0
+            total += fresh
+            logger.info("warmed profile cache: sector=%s rows=%d", sec, fresh)
         except Exception as e:
             logger.warning("warmup failed for %s: %s", sec, e)
     return total
@@ -200,18 +273,9 @@ def screen(
     `min_cap` is the raw market cap (e.g. 5e9 for $5B). Returns a list of
     dicts sorted by forward P/E ascending.
     """
-    if custom_tickers.strip():
-        tickers = [t.strip().upper() for t in custom_tickers.split(",") if t.strip()]
-    else:
-        tickers = SECTORS.get(sector, SECTORS["semiconductors"])
-
+    tickers = _universe(sector, custom_tickers)
     cache_key = f"{sector}:{','.join(sorted(tickers))}"
-    now = time.time()
-    if cache_key in _cache and now - _cache[cache_key][0] < _CACHE_TTL:
-        rows = _cache[cache_key][1]
-    else:
-        rows = _fetch_all(tickers)
-        _cache[cache_key] = (now, rows)
+    rows, _meta = _load(cache_key, tickers)
 
     filtered: list[dict] = []
     for r in rows:
@@ -231,6 +295,10 @@ def screen(
 
 def _fetch_all(tickers: list[str]) -> list[dict]:
     import yfinance as yf
+
+    global _fetch_error
+    _fetch_error = ""
+    errors: list[str] = []
 
     try:
         hist = yf.download(
@@ -301,8 +369,18 @@ def _fetch_all(tickers: list[str]) -> list[dict]:
             }
         except Exception as e:
             logger.debug("fetch failed for %s: %s", t, e)
+            errors.append(type(e).__name__)
             return None
 
     with ThreadPoolExecutor(max_workers=_INFO_WORKERS) as pool:
         rows = [r for r in pool.map(_fetch_one, tickers) if r is not None]
+    if errors:
+        # One line, not one per ticker: this is how a blocked or rate-limited
+        # server shows up, and at debug level it used to be invisible.
+        kind = max(set(errors), key=errors.count)
+        logger.warning(
+            "profile screener: %d of %d tickers failed (%s)", len(errors), len(tickers), kind
+        )
+        if not rows:
+            _fetch_error = kind
     return rows

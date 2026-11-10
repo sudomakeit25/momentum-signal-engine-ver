@@ -95,6 +95,10 @@ export default function StockScreenerPage() {
 
   const { data: runData, isFetching } = useProfileScreenerRun(runParams, runCount > 0);
   const rows = (runData?.results as Row[] | undefined) ?? [];
+  // The server says when its data source failed, so an empty table caused by
+  // missing data is not presented as "no stocks match these filters".
+  const dataFailed = runData?.data_ok === false;
+  const dataNote = dataFailed ? String(runData?.note ?? "") : "";
 
   return (
     <div className="space-y-4">
@@ -205,7 +209,13 @@ export default function StockScreenerPage() {
         </div>
       )}
 
-      {!isFetching && runData && rows.length === 0 && (
+      {!isFetching && runData && dataNote && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-400">
+          {dataNote}
+        </div>
+      )}
+
+      {!isFetching && runData && rows.length === 0 && !dataFailed && (
         <div className="rounded-lg border border-zinc-800 p-8 text-center text-sm text-zinc-500">
           No stocks match these filters. Try relaxing a criterion.
         </div>

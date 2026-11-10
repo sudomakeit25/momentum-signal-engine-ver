@@ -270,7 +270,7 @@ class TestScanIntraday:
 
         monkeypatch.setattr(mod.client, "get_multi_bars", fake_multi_bars)
         monkeypatch.setattr(mod.client, "get_intraday_multi_bars", fake_intraday_bars)
-        monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (set(), True))
+        monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (set(), set(symbols)))
         results = mod.scan_intraday(
             symbols=["MOVR", "QUIET", "BTC/USD"],
             check_spread=False,
@@ -459,7 +459,9 @@ class TestScanWatches:
                             lambda symbols, timeframe=None, days=200: {"MOVR": daily.copy()})
         monkeypatch.setattr(mod.client, "get_intraday_multi_bars",
                             lambda symbols, minutes_back=400, timeframe_minutes=5: {"MOVR": five_min})
-        monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (self.reporting, self.known))
+        monkeypatch.setattr(
+            mod, "_earnings_lookup",
+            lambda symbols: (self.reporting, set(symbols) if self.known else set()))
         return mod.scan_intraday(symbols=["MOVR"], check_spread=False, now=NOW)
 
     def test_intact_box_surfaces_as_watch(self, monkeypatch):
@@ -557,28 +559,20 @@ class TestEarningsFlag:
         r = self._scan(monkeypatch, set(), False)
         assert r.earnings_soon is False and r.earnings_known is False
 
-    def test_empty_calendar_counts_as_unknown(self, monkeypatch):
-        import src.scanner.earnings_whisper as ew
+    def test_lookup_error_means_nothing_is_known(self, monkeypatch):
+        from src.data import earnings_calendar
         from src.scanner import intraday_movers as mod
-        monkeypatch.setattr(ew, "get_earnings_calendar", lambda days_ahead=1: [])
-        assert mod._earnings_lookup(["NVDA"]) == (set(), False)
-
-    def test_lookup_exception_counts_as_unknown(self, monkeypatch):
-        import src.scanner.earnings_whisper as ew
-        from src.scanner import intraday_movers as mod
-        def boom(days_ahead=1):
+        def boom(symbols, now=None):
             raise RuntimeError("503")
-        monkeypatch.setattr(ew, "get_earnings_calendar", boom)
-        assert mod._earnings_lookup(["NVDA"]) == (set(), False)
+        monkeypatch.setattr(earnings_calendar, "reporting_soon", boom)
+        assert mod._earnings_lookup(["NVDA"]) == (set(), set())
 
-    def test_working_lookup(self, monkeypatch):
-        import src.scanner.earnings_whisper as ew
+    def test_lookup_passes_through_the_calendar_answer(self, monkeypatch):
+        from src.data import earnings_calendar
         from src.scanner import intraday_movers as mod
-        from types import SimpleNamespace as NS
-        monkeypatch.setattr(ew, "get_earnings_calendar", lambda days_ahead=1: [{"symbol": "X"}])
-        monkeypatch.setattr(ew, "get_upcoming_earnings",
-                            lambda symbols, days_ahead=1: [NS(symbol="NVDA")])
-        assert mod._earnings_lookup(["NVDA", "AMD"]) == ({"NVDA"}, True)
+        monkeypatch.setattr(earnings_calendar, "reporting_soon",
+                            lambda symbols, now=None: ({"NVDA"}, {"NVDA", "AMD"}))
+        assert mod._earnings_lookup(["NVDA", "AMD", "MU"]) == ({"NVDA"}, {"NVDA", "AMD"})
 
 
 def test_make_signal_rejects_non_finite_levels():

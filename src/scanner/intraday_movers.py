@@ -447,23 +447,19 @@ HIGH_BETA_EXTRAS = [
 ]
 
 
-def _earnings_lookup(symbols: list[str]) -> tuple[set[str], bool]:
-    """Symbols reporting today or tomorrow, and whether the lookup worked.
+def _earnings_lookup(symbols: list[str]) -> tuple[set[str], set[str]]:
+    """(symbols reporting today or tomorrow, symbols whose status is known).
 
-    The calendar client returns an empty list on any failure (missing key,
-    HTTP error), so an empty market-wide calendar is treated as "unknown",
-    not as "nobody reports". Callers that act on the flag can then refuse.
+    A symbol missing from the second set could not be checked, which is not
+    the same as "does not report". Callers that act on the flag refuse those.
     """
     try:
-        from src.scanner import earnings_whisper as ew
+        from src.data import earnings_calendar
 
-        if not ew.get_earnings_calendar(days_ahead=1):
-            return set(), False
-        events = ew.get_upcoming_earnings(symbols, days_ahead=1)
-        return {e.symbol for e in events}, True
+        return earnings_calendar.reporting_soon(symbols)
     except Exception as e:
-        logger.debug("Earnings lookup failed: %s", e)
-        return set(), False
+        logger.warning("Earnings lookup failed: %s", e)
+        return set(), set()
 
 
 def _intraday_universe(symbols: list[str] | None) -> list[str]:
@@ -623,6 +619,6 @@ def scan_intraday(
         reporting, known = _earnings_lookup([r.symbol for r in results])
         for r in results:
             r.earnings_soon = r.symbol in reporting
-            r.earnings_known = known
+            r.earnings_known = r.symbol in known
 
     return results

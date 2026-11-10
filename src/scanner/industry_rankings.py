@@ -139,24 +139,13 @@ def get_industry_ranking(industry_slug: str, limit: int = _MAX_TICKERS) -> dict:
     if not settings.fmp_api_key:
         return {"error": "FMP key not configured", "industry": industry, "companies": []}
 
-    # Step 1: list tickers in this industry via FMP screener
-    import requests
-    params = {
-        "industry": industry,
-        "limit": 500,
-        "apikey": settings.fmp_api_key,
-    }
-    try:
-        resp = requests.get(
-            "https://financialmodelingprep.com/api/v3/stock-screener",
-            params=params,
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            return {"error": f"FMP screener {resp.status_code}", "industry": industry, "companies": []}
-        data = resp.json()
-    except Exception as e:
-        return {"error": f"screener failed: {e}", "industry": industry, "companies": []}
+    # Step 1: list tickers in this industry via the FMP company screener
+    from src.data import fmp_client
+    data = fmp_client.screen_companies({"industry": industry}, max_rows=500)
+    if data is None:
+        why = fmp_client.status()["endpoints"].get("/company-screener", {})
+        detail = why.get("message") or f"HTTP {why.get('status', '?')}"
+        return {"error": f"FMP screener unavailable: {detail}", "industry": industry, "companies": []}
 
     if not isinstance(data, list) or not data:
         return {"industry": industry, "companies": [], "country_weights": {}}
