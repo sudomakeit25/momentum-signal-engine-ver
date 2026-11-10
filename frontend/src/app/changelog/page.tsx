@@ -4,6 +4,47 @@ import { FileText } from "lucide-react";
 
 const CHANGELOG = [
   {
+    version: "0.12.0",
+    date: "2026-11-10",
+    changes: [
+      "Catalyst Watch: companies about to report with heavy short interest, and companies that just reported and jumped on volume",
+      "Spike Watch: pre-market gaps with the reason attached, volume spikes, failed breakouts, exhaustion days, stretched stocks, and peers that have not followed a group leader",
+      "Scorecard: measures whether each type of alert worked, at 15 minutes, 1 hour, the close, and 1 and 5 days later",
+      "News headline shown next to each intraday mover, so you can see why it is moving",
+      "Earnings check now uses Nasdaq's calendar and covers the whole market",
+      "Market data delay is now measured and shown: prices are about 15 minutes behind on the current data plan, stated on the intraday pages and in intraday text alerts",
+      "Fixed: ten signal pages (short squeeze, unusual volume, gaps and others) were returning errors or the wrong data",
+      "Fixed: the stock screener now says when its data source is down, where it used to report that no stocks matched",
+      "Fixed: alerts had stopped in production because the Redis database was archived; restored",
+      "Known limit: the Spike Watch detectors are new and unproven, so they send no alerts yet",
+      "Known limit: the stock screener is often empty because Yahoo Finance rate-limits the server",
+      "Known limit: company profiles, statements and the dynamic scan universe need a paid FMP plan",
+    ],
+  },
+  {
+    version: "0.11.0",
+    date: "2026-11-10",
+    changes: [
+      "Paper auto-trader: turns confirmed intraday setups into Alpaca paper orders with a stop and target",
+      "Limits: risk per trade, positions per day, daily loss halt, no trades on companies about to report, no new entries late in the day",
+      "Closes its own positions before the bell, and never touches positions it did not open",
+      "Status panel with a Pause button on the Intraday Movers page",
+      "Off unless switched on in the server settings; refuses to run on anything but the paper account",
+      "Known limit: its signals come from prices about 15 minutes old on the current data plan",
+    ],
+  },
+  {
+    version: "0.10.0",
+    date: "2026-11-09",
+    changes: [
+      "Intraday Movers: stocks moving hard today on heavy volume, with spread, range and VWAP distance",
+      "Setups with entry, stop and target: range breakout, VWAP reclaim and rejection, higher low",
+      "Early warnings for setups still forming: an intact tight range, or price back at VWAP",
+      "Text alerts for new setups, once per stock and setup per day",
+      "Earnings flag on stocks reporting today or tomorrow",
+    ],
+  },
+  {
     version: "0.9.0",
     date: "2026-04-05",
     changes: [

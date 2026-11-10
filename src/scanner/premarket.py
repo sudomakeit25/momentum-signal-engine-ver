@@ -57,6 +57,14 @@ def _reporters(today) -> dict[str, dict]:
     return out
 
 
+def _measured_delay(now: datetime | None) -> int | None:
+    try:
+        from src.data import freshness
+        return freshness.data_delay(now).get("delay_minutes")
+    except Exception:
+        return None
+
+
 def premarket_stats(bars: pd.DataFrame, today) -> dict | None:
     """Last price, volume and range of today's 04:00-09:30 ET bars, plus the
     latest price of the day (which is after the open once it has opened)."""
@@ -186,15 +194,18 @@ def scan_premarket_gaps(
             r["headline"] = top["headline"] if top else ""
 
     notes = []
-    # Say how old the data is. Alpaca's free plan delays full-market bars by
-    # 15 minutes, so a "9:15 list" really shows about 9:00.
+    # Say how old the data is, using the same measurement as the banner so
+    # the page never shows two different numbers. Alpaca's free plan delays
+    # full-market bars by 15 minutes, so a "9:15 list" really shows ~9:00.
     newest = max((r["time"] for r in rows), default="")
-    delay = None
-    if newest:
-        delay = int((n - datetime.fromisoformat(newest)).total_seconds() // 60) - 5
-        if phase == "premarket" and delay >= 10:
-            notes.append(f"Prices are about {delay} minutes behind: the data plan delays "
-                         "full-market bars.")
+    delay = _measured_delay(n if now is not None else None)
+    if delay is None and newest:
+        # Fallback when the measurement is unavailable: estimate from the
+        # newest 5-minute bar in the list (coarser).
+        delay = max(int((n - datetime.fromisoformat(newest)).total_seconds() // 60) - 5, 0)
+    if phase == "premarket" and delay is not None and delay >= 5:
+        notes.append(f"Prices are about {delay} minutes behind: the data plan delays "
+                     "full-market bars.")
     if phase != "premarket":
         notes.append("The market has opened: this is this morning's gap list, with where "
                      "each stock is now.")

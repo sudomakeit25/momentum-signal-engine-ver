@@ -63,6 +63,8 @@ def world(monkeypatch):
     monkeypatch.setattr(pm.client, "get_multi_bars", multi)
     monkeypatch.setattr(pm.client, "get_intraday_multi_bars", intraday)
     monkeypatch.setattr(pm.ec, "nasdaq_day", nasdaq_day)
+    w["measured_delay"] = None                     # freshness probe unavailable by default
+    monkeypatch.setattr(pm, "_measured_delay", lambda now: w["measured_delay"])
     monkeypatch.setattr("src.data.news.latest_headlines",
                         lambda symbols, **k: {s: [{"headline": f"{s} headline"}]
                                               for s in symbols if s != "QUIET"})
@@ -171,6 +173,19 @@ class TestScan:
         r = run(world, ["RIOT"])
         assert r["delay_minutes"] == 15 and r["data_as_of"].startswith("2026-11-10T08:55")
         assert any("15 minutes behind" in n for n in r["notes"])
+
+    def test_delay_matches_the_shared_measurement_when_available(self, world):
+        add(world, "RIOT", 104.0, 200_000, when="09:00")               # bars alone would say 10
+        world["measured_delay"] = 14
+        r = run(world, ["RIOT"])
+        assert r["delay_minutes"] == 14
+        assert any("about 14 minutes behind" in n for n in r["notes"])
+
+    def test_measured_real_time_data_shows_no_note(self, world):
+        add(world, "RIOT", 104.0, 200_000, when="08:55")
+        world["measured_delay"] = 0
+        r = run(world, ["RIOT"])
+        assert r["delay_minutes"] == 0 and not any("behind" in n for n in r["notes"])
 
     def test_no_delay_note_when_data_is_current(self, world):
         add(world, "RIOT", 104.0, 200_000, when="09:10")
