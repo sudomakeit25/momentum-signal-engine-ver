@@ -17,6 +17,7 @@ export function AutoTraderPanel() {
   const { data, isError } = useAutoTrader();
   const pause = useAutoTraderPause();
   const [showSkips, setShowSkips] = useState(false);
+  const [resumeKey, setResumeKey] = useState("");
 
   if (isError || !data) return null;
 
@@ -40,16 +41,42 @@ export function AutoTraderPanel() {
             flat by {c.flatten_at} ET
           </span>
         </div>
-        {data.enabled && !(data.paused && data.resume_hint) && (
+        {data.enabled && !data.paused && (
           <Button
             variant="outline"
             size="sm"
             className="h-7 text-xs"
             disabled={pause.isPending}
-            onClick={() => pause.mutate(!data.paused)}
+            onClick={() => pause.mutate({ pause: true })}
           >
-            {data.paused ? "Resume" : "Pause"}
+            Pause
           </Button>
+        )}
+        {data.enabled && data.paused && !data.resume_hint && (
+          <div className="flex items-center gap-1">
+            <input
+              type="password"
+              value={resumeKey}
+              onChange={(e) => setResumeKey(e.target.value)}
+              placeholder="Resume key"
+              autoComplete="off"
+              className="h-7 w-32 rounded border bg-transparent px-2 text-xs"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={pause.isPending || !resumeKey}
+              onClick={() =>
+                pause.mutate(
+                  { pause: false, key: resumeKey },
+                  { onSuccess: () => setResumeKey("") }
+                )
+              }
+            >
+              Resume
+            </Button>
+          </div>
         )}
       </div>
 
@@ -63,6 +90,11 @@ export function AutoTraderPanel() {
       {data.paused && data.resume_hint && (
         <p className="mt-2 text-amber-400">Paused. From this page, {data.resume_hint}.</p>
       )}
+      {(data.notices ?? []).map((n) => (
+        <p key={`${n.date}-${n.symbol}`} className="mt-2 text-amber-400">
+          {n.date}: {n.text}
+        </p>
+      ))}
       {!data.store_ok && (
         <p className="mt-2 text-red-400">
           The state store cannot be read, so no orders are being placed.

@@ -1690,14 +1690,12 @@ def trading_auto_pause():
 
 
 @router.post("/trading/auto/resume")
-def trading_auto_resume(authorization: str = Header(default="")):
-    """Clear the pause. Only the configured owner account may do this, and
-    it never enables trading if the master switch is off."""
+def trading_auto_resume(x_resume_key: str = Header(default="")):
+    """Clear the pause. Needs the server-side resume key in the X-Resume-Key
+    header. Never enables trading if the master switch is off."""
     from fastapi import HTTPException
-    from src.auth.deps import get_current_user
     from src.trading import auto_trader
-    user = get_current_user(authorization)
-    allowed, why = auto_trader.can_resume(user)
+    allowed, why = auto_trader.can_resume(x_resume_key)
     if not allowed:
         raise HTTPException(status_code=403, detail=why)
     if not auto_trader.set_paused(False) and auto_trader.has_persistent_store():

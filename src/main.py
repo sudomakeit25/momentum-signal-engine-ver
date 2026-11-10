@@ -528,22 +528,19 @@ def _auto_trade_guard_loop():
     """Closes the auto-trader's own positions before the bell.
 
     Separate from the 5-minute scan loop on purpose: the close has a short
-    window, and a slow scan must not be able to miss it. Wakes every 30
-    seconds (every 5 minutes while the bot is switched off, when it only
-    needs to catch a position left from before it was switched off).
-    `maybe_flatten` itself makes no broker call outside session hours.
+    window, and a slow scan must not be able to miss it. Ticks every 30
+    seconds whether or not the master switch is on, so a position opened
+    before the bot was switched off is still closed, and a failed attempt is
+    retried within seconds. `maybe_flatten` makes no broker call outside
+    session hours and only a clock call away from the close.
     """
     from src.trading import auto_trader
 
-    last_run = 0.0
     while not _stop_event.is_set():
         try:
-            interval = 30 if auto_trader.get_config().enabled else 300
-            if time.monotonic() - last_run >= interval:
-                last_run = time.monotonic()
-                closed = auto_trader.maybe_flatten()
-                if closed:
-                    logger.info("Auto-trader closing: %s", closed)
+            closed = auto_trader.maybe_flatten()
+            if closed:
+                logger.info("Auto-trader closing: %s", closed)
         except Exception as e:
             logger.warning("Auto-trader guard failed: %s", e)
         _stop_event.wait(30)

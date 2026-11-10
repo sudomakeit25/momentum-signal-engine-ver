@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, apiPost, apiPostJson } from "@/lib/api";
-import { getAuthToken } from "@/hooks/use-auth";
 
 export interface AutoTrade {
   time: string;
@@ -34,6 +33,7 @@ export interface AutoTraderStatus {
   paper: boolean;
   store_ok: boolean;
   resume_hint: string;
+  notices: { date: string; symbol: string; text: string }[];
   config: {
     risk_per_trade_usd: number;
     max_position_usd: number;
@@ -61,17 +61,20 @@ export function useAutoTrader() {
 export function useAutoTraderPause() {
   const queryClient = useQueryClient();
   return useMutation({
-    // Pausing is open (it can only make the bot safer). Resuming needs a
-    // logged-in user, so it sends the session token.
-    mutationFn: async (pause: boolean) => {
-      if (pause) return apiPost<AutoTraderStatus>("/trading/auto/pause");
-      const token = getAuthToken();
-      if (!token) throw new Error("Log in to resume the auto-trader");
-      return apiPostJson<AutoTraderStatus>(
-        "/trading/auto/resume",
-        {},
-        { Authorization: `Bearer ${token}` }
-      );
+    // Pausing is open (it can only make the bot safer). Resuming needs the
+    // server-side resume key, typed in by the owner and never stored.
+    mutationFn: async (action: { pause: true } | { pause: false; key: string }) => {
+      if (action.pause) return apiPost<AutoTraderStatus>("/trading/auto/pause");
+      if (!action.key) throw new Error("Enter the resume key");
+      try {
+        return await apiPostJson<AutoTraderStatus>(
+          "/trading/auto/resume",
+          {},
+          { "X-Resume-Key": action.key }
+        );
+      } catch {
+        throw new Error("Resume refused: wrong key, or resume is not set up on the server");
+      }
     },
     onSuccess: (data) => queryClient.setQueryData(["auto-trader"], data),
   });

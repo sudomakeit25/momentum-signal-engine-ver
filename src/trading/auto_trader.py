@@ -27,6 +27,7 @@ Safety properties, all enforced in code:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import math
@@ -58,6 +59,7 @@ _MAX_PAGES = 20          # beyond this the history is too large to trust
 
 _STATE_KEY = "mse:auto_trade_state"
 _PAUSED_KEY = "mse:auto_trade_paused"
+_NOTICE_KEY = "mse:auto_trade_notices"
 _MAX_LOG = 200
 
 # Process-local copy. It is the store when Redis is not configured, and the
@@ -164,7 +166,7 @@ class Broker(Protocol):
 
     Order dicts (from `account_orders`) have: order_id, client_order_id,
     symbol, side ("buy"/"sell"), status, qty, filled_qty, ts (epoch seconds
-    of the fill, else of submission), date (ET, ISO), and legs (a list of the
+    of submission), fill_ts (of the fill), date (ET, ISO), and legs (a list of the
     same shape for bracket children). `account_orders` returns EVERY order
     on the account, not only the bot's: a manual sale has to be visible for
     the bot to know it no longer owns those shares.
@@ -190,7 +192,11 @@ class Broker(Protocol):
 def _order_dict(o) -> dict:
     created = getattr(o, "created_at", None) or getattr(o, "submitted_at", None)
     date = created.astimezone(ET).date().isoformat() if created else ""
-    when = getattr(o, "filled_at", None) or created
+    # A partly filled order may have no filled_at; updated_at then marks the
+    # fill. Falling back to created_at would date a bracket leg's fill before
+    # its own entry and the ledger would ignore it.
+    filled = (getattr(o, "filled_at", None) or getattr(o, "updated_at", None)
+              or created)
     status = getattr(o.status, "value", o.status)
     side = getattr(o.side, "value", o.side)
     return {
@@ -201,7 +207,8 @@ def _order_dict(o) -> dict:
         "status": str(status),
         "qty": float(o.qty or 0),
         "filled_qty": float(o.filled_qty or 0),
-        "ts": when.timestamp() if when else 0.0,
+        "ts": created.timestamp() if created else 0.0,
+        "fill_ts": filled.timestamp() if filled else 0.0,
         "date": date,
         "legs": [_order_dict(leg) for leg in (getattr(o, "legs", None) or [])],
     }
@@ -273,7 +280,11 @@ class AlpacaPaperBroker:
                 seen.setdefault(str(o.id), _order_dict(o))
             if len(page) < _PAGE_SIZE:
                 return list(seen.values())
-            oldest = min(o.created_at for o in page if o.created_at)
+            # Alpaca filters and sorts on submission time, so step on that.
+            oldest = min(
+                (getattr(o, "submitted_at", None) or o.created_at) for o in page
+                if (getattr(o, "submitted_at", None) or o.created_at)
+            )
             # `until` is exclusive; step a microsecond past the oldest so
             # orders sharing its timestamp are fetched again (deduped by id).
             until = oldest + timedelta(microseconds=1)
@@ -400,9 +411,32 @@ def load_state() -> DayState:
         return DayState()
 
 
-def save_state(state: DayState) -> None:
+def save_state(state: DayState) -> bool:
+    """Save the day log. Returns False if it is not durable (see _store_set)."""
     state.skips = state.skips[-_MAX_LOG:]
-    _store_set(_STATE_KEY, json.dumps(asdict(state)))
+    return _store_set(_STATE_KEY, json.dumps(asdict(state)), attempts=3)
+
+
+def add_notice(symbol: str, text: str, date: str) -> None:
+    """Record something the owner needs to look at (shown by status())."""
+    try:
+        raw = _store_get(_NOTICE_KEY)
+        notices = json.loads(raw) if raw else []
+    except Exception:
+        notices = []
+    if any(x.get("date") == date and x.get("symbol") == symbol for x in notices):
+        return
+    notices.append({"date": date, "symbol": symbol, "text": text})
+    _store_set(_NOTICE_KEY, json.dumps(notices[-50:]), attempts=3)
+
+
+def load_notices(since_date: str) -> list[dict]:
+    try:
+        raw = _store_get(_NOTICE_KEY)
+        notices = json.loads(raw) if raw else []
+    except Exception:
+        return []
+    return [x for x in notices if str(x.get("date", "")) >= since_date]
 
 
 def is_paused() -> bool:
@@ -421,16 +455,25 @@ def set_paused(paused: bool) -> bool:
     return _store_set(_PAUSED_KEY, "1" if paused else "0", attempts=3)
 
 
-def can_resume(user: dict | None) -> tuple[bool, str]:
-    """Who may clear the pause through the API: only the configured owner,
-    and only when login tokens cannot be forged with the default secret."""
-    owner = (settings.auto_trade_owner_email or "").strip().lower()
-    if not owner:
-        return False, "resume is disabled until AUTO_TRADE_OWNER_EMAIL is set on the server"
-    if settings.jwt_secret == type(settings).model_fields["jwt_secret"].default:
-        return False, "resume is disabled until JWT_SECRET is changed from its default"
-    if not user or str(user.get("email", "")).strip().lower() != owner:
-        return False, "only the owner account can resume the auto-trader"
+def resume_available() -> tuple[bool, str]:
+    key = settings.auto_trade_resume_key or ""
+    if len(key) < 16:
+        return False, ("resume is disabled until AUTO_TRADE_RESUME_KEY "
+                       "(16+ characters) is set on the server")
+    return True, ""
+
+
+def can_resume(key: str | None) -> tuple[bool, str]:
+    """Clearing the pause through the API needs a secret only the owner has.
+
+    It is deliberately not tied to a site login: accounts are self-registered
+    and unverified, so "logged in as the owner's email" proves nothing.
+    """
+    ok, why = resume_available()
+    if not ok:
+        return False, why
+    if not key or not hmac.compare_digest(str(key), settings.auto_trade_resume_key):
+        return False, "wrong resume key"
     return True, ""
 
 
@@ -464,6 +507,10 @@ class Holding:
     cancel_ids: list[str]     # the bot's own still-open orders for this entry
     flat_attempts: int        # closing orders already sent for this entry
     position: float           # actual same-direction position in the symbol
+
+
+def _fill_time(order: dict) -> float:
+    return float(order.get("fill_ts") or order.get("ts") or 0.0)
 
 
 def _flat_owner(coid: str) -> str:
@@ -509,7 +556,7 @@ def owned_holdings(orders: list[dict], positions: dict[str, float]) -> list[Hold
                 continue
             opposite = sorted(
                 (f for f in fills if f["symbol"] == sym and f["side"] != side),
-                key=lambda f: f.get("ts", 0.0),
+                key=_fill_time,
             )
             for f in opposite:
                 qty = float(f["filled_qty"])
@@ -521,7 +568,7 @@ def owned_holdings(orders: list[dict], positions: dict[str, float]) -> list[Hold
                 for lot in order:
                     if qty <= 0:
                         break
-                    if lot.get("ts", 0.0) > f.get("ts", 0.0):
+                    if lot.get("ts", 0.0) > _fill_time(f):
                         continue    # sold before this entry existed
                     take = min(qty, remaining[lot["client_order_id"]])
                     remaining[lot["client_order_id"]] -= take
@@ -810,6 +857,8 @@ def handle_new_setups(
 
         if decision.halt:
             state.halted = decision.reason
+            if not save_state(state) and has_persistent_store():
+                logger.error("Auto-trader: loss halt could not be saved durably")
         if not decision.trade:
             records.append(_skip(state, signal, decision.reason, n))
             continue
@@ -884,6 +933,25 @@ def _wait_cleared(
     return False
 
 
+def _recount(broker: Broker, entry_coid: str, since: datetime, tries: int = 3):
+    """Re-read the broker and return this entry's holding (None if gone).
+
+    Called after the bot's legs were cancelled, when the shares have no stop:
+    a single failed read must not leave them like that until the next cycle,
+    so it is retried before giving up.
+    """
+    last: Exception | None = None
+    for attempt in range(tries):
+        try:
+            current = owned_holdings(broker.account_orders(since), broker.positions())
+            return {x.entry_coid: x for x in current}.get(entry_coid)
+        except Exception as e:
+            last = e
+            if attempt < tries - 1:
+                time.sleep(0.5)
+    raise RuntimeError(f"could not recount after cancelling legs: {last}")
+
+
 def maybe_flatten(
     broker: Broker | None = None,
     cfg: AutoTradeConfig | None = None,
@@ -935,22 +1003,42 @@ def maybe_flatten(
         return []
 
     today = n.date().isoformat()
+    holdings = owned_holdings(orders, positions)
+
+    # Shares remain but the bot no longer claims them, because the symbol was
+    # also traded by hand. Its bracket legs must not go on selling shares it
+    # does not claim, and the owner has to be told: nothing manages them now.
+    for h in holdings:
+        if h.qty <= 0 and h.position <= 0 and h.cancel_ids and due:
+            # Live legs with no position behind them could open a short.
+            for oid in h.cancel_ids:
+                try:
+                    broker.cancel_order(oid)
+                except Exception as e:
+                    logger.debug("Auto-trader: cancel %s: %s", oid, e)
+        if h.qty <= 0 and h.position > 0 and h.cancel_ids:
+            for oid in h.cancel_ids:
+                try:
+                    broker.cancel_order(oid)
+                except Exception as e:
+                    logger.debug("Auto-trader: cancel %s: %s", oid, e)
+            logger.warning("Auto-trader: no longer managing %s (traded by hand)", h.symbol)
+            add_notice(
+                h.symbol,
+                f"{h.symbol} was also traded by hand, so the bot stopped managing it and "
+                f"cancelled its own stop and target. {h.position:g} shares are open with "
+                "no stop from the bot. Check this position yourself.",
+                today,
+            )
+
     targets = [
-        h for h in owned_holdings(orders, positions)
-        if due or (h.entry_date and h.entry_date < today)
+        h for h in holdings
+        if h.qty > 0 and (due or (h.entry_date and h.entry_date < today))
     ]
 
     closed: list[str] = []
     for h in targets:
         try:
-            if h.qty <= 0 and h.position > 0:
-                # Shares remain but the bot no longer claims them (the symbol
-                # was also traded by hand). Leave them, and their stop, alone.
-                logger.warning(
-                    "Auto-trader: %s has shares the bot no longer claims; left untouched",
-                    h.symbol,
-                )
-                continue
             for oid in h.cancel_ids:
                 try:
                     broker.cancel_order(oid)
@@ -958,8 +1046,6 @@ def maybe_flatten(
                     # Cancelling one bracket leg can cancel its sibling too;
                     # the second cancel then errors. The wait below decides.
                     logger.debug("Auto-trader: cancel %s: %s", oid, e)
-            if h.qty <= 0:
-                continue   # orphan legs with no position: cancelling was the job
             # Cancels are asynchronous: the shares stay reserved until the
             # legs are really gone.
             if h.cancel_ids and not _wait_cleared(broker, h.symbol, h.cancel_ids):
@@ -970,10 +1056,7 @@ def maybe_flatten(
             # The target or stop may have filled while the legs were being
             # cancelled. Recount from the broker now that no bot order can
             # fill any more, so the close can never oversell into a short.
-            fresh = {
-                x.entry_coid: x
-                for x in owned_holdings(broker.account_orders(since), broker.positions())
-            }.get(h.entry_coid)
+            fresh = _recount(broker, h.entry_coid, since)
             if fresh is None or fresh.qty <= 0:
                 continue
             suffix = h.entry_coid[len(BOT_PREFIX):]
@@ -1027,7 +1110,8 @@ def status() -> dict:
         "paused": paused,
         "paper": paper,
         "store_ok": store_ok,
-        "resume_hint": can_resume({"email": settings.auto_trade_owner_email})[1],
+        "resume_hint": resume_available()[1],
+        "notices": load_notices((_now_et(None) - timedelta(days=7)).date().isoformat()),
         "config": cfg.to_dict(),
         "date": state.date,
         "halted": state.halted,

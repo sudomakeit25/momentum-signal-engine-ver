@@ -994,12 +994,14 @@ class TestRoutes:
         r = c.post("/trading/auto/pause")
         assert r.status_code == 200 and r.json()["paused"] is True
 
-    def test_resume_requires_login(self):
+    def test_resume_without_a_key_is_refused(self, monkeypatch):
+        from config.settings import settings
+        monkeypatch.setattr(settings, "auto_trade_resume_key", "k" * 24)
         c = self._client()
         c.post("/trading/auto/pause")
-        assert c.post("/trading/auto/resume").status_code == 401
+        assert c.post("/trading/auto/resume").status_code == 403
         assert c.post("/trading/auto/resume",
-                      headers={"Authorization": "Bearer nope"}).status_code == 401
+                      headers={"X-Resume-Key": "nope"}).status_code == 403
         assert at.is_paused()
 
     def test_no_route_can_enable(self):
@@ -1057,7 +1059,7 @@ class TestAlpacaAdapter:
         from types import SimpleNamespace as NS
         return NS(id=oid, client_order_id=coid, symbol="NVDA", side=NS(value="buy"),
                   status=NS(value="filled"), qty="5", filled_qty="5", created_at=when,
-                  submitted_at=when, filled_at=filled_at, legs=legs)
+                  submitted_at=when, filled_at=filled_at, updated_at=None, legs=legs)
 
     def test_account_orders_returns_everything_with_legs(self, monkeypatch):
         when = datetime(2026, 11, 9, 15, 0, tzinfo=ZoneInfo("UTC"))
@@ -1080,8 +1082,9 @@ class TestAlpacaAdapter:
         assert [o["client_order_id"] for o in out] == \
             ["mse-auto-2026-11-09-NVDA-higher_low", "my-manual-order"]
         assert out[0]["date"] == "2026-11-09" and out[0]["filled_qty"] == 5.0
-        assert out[0]["ts"] == filled.timestamp() and len(out[0]["legs"]) == 1
-        assert out[1]["ts"] == when.timestamp()      # unfilled-at falls back to created
+        assert out[0]["ts"] == when.timestamp() and out[0]["fill_ts"] == filled.timestamp()
+        assert len(out[0]["legs"]) == 1
+        assert out[1]["fill_ts"] == when.timestamp()   # no fill time: falls back
 
     def test_account_orders_pages_until_history_is_complete(self, monkeypatch):
         from datetime import timedelta
@@ -1099,6 +1102,44 @@ class TestAlpacaAdapter:
         out = b.account_orders(MON_11)
         assert len(out) == 1200 and len({o["order_id"] for o in out}) == 1200
         assert len(reqs) == 3
+
+    def test_paging_steps_on_submission_time_not_creation_time(self, monkeypatch):
+        from datetime import timedelta
+        base = datetime(2026, 11, 9, 15, 0, tzinfo=ZoneInfo("UTC"))
+        lag = timedelta(seconds=2)                   # submitted later than created
+        everything = []
+        for i in range(1100):
+            o = self._order(str(i), f"c{i}", base - timedelta(seconds=i))
+            o.submitted_at = o.created_at + lag
+            everything.append(o)
+        class Client:
+            def get_orders(self, req):               # Alpaca filters on submitted_at
+                pool = [o for o in everything
+                        if req.until is None or o.submitted_at < req.until]
+                return pool[:req.limit]
+        b = at.AlpacaPaperBroker()
+        monkeypatch.setattr(b, "_client", lambda: Client())
+        assert len(b.account_orders(MON_11)) == 1100
+
+    def test_partly_filled_leg_without_filled_at_still_counts(self):
+        """Alpaca-shaped objects through _order_dict: a leg that sold 20 and
+        has no filled_at must still reduce the bot's lot."""
+        from types import SimpleNamespace as NS
+        t0 = datetime(2026, 11, 9, 15, 0, 0, tzinfo=ZoneInfo("UTC"))
+        t1 = datetime(2026, 11, 9, 15, 0, 1, tzinfo=ZoneInfo("UTC"))
+        t2 = datetime(2026, 11, 9, 16, 0, 0, tzinfo=ZoneInfo("UTC"))
+        def o(oid, coid, side, status, qty, filled, created, filled_at, updated, legs=None):
+            return NS(id=oid, client_order_id=coid, symbol="NVDA", side=NS(value=side),
+                      status=NS(value=status), qty=str(qty), filled_qty=str(filled),
+                      created_at=created, submitted_at=created, filled_at=filled_at,
+                      updated_at=updated, legs=legs)
+        leg = o("L1", None, "sell", "canceled", 49, 20, t0, None, t2)     # partial, no filled_at
+        entry = o("E1", "mse-auto-2026-11-09-NVDA-higher_low", "buy", "filled", 49, 49,
+                  t0, t1, t1, legs=[leg])
+        user = o("U1", "manual", "buy", "filled", 100, 100, t0, t1, t1)
+        orders = [at._order_dict(x) for x in (entry, user)]
+        held = at.owned_holdings(orders, {"NVDA": 129.0})
+        assert [h.qty for h in held] == [29.0]       # not 49: 20 of them were sold
 
     def test_account_orders_refuses_a_history_it_cannot_finish(self, monkeypatch):
         when = datetime(2026, 11, 9, 15, 0, tzinfo=ZoneInfo("UTC"))
@@ -1184,14 +1225,37 @@ class TestOwnership:
         assert b.market_orders == [] and b.positions() == {}
         assert _due(b) == []                                  # and nothing later either
 
-    def test_shares_disowned_after_hand_trading_are_left_with_their_stop(self):
+    def test_disowned_shares_lose_the_bots_legs_and_raise_a_notice(self):
         b = FakeBroker(quotes=Q)
         _run(b)
         b.user_trade("NVDA", "buy", 100)
         b.user_trade("NVDA", "sell", 100)       # ambiguous: could be the bot's shares
         assert _due(b) == []
-        assert b.market_orders == [] and b.cancelled == []
+        assert b.market_orders == []            # never sells what it does not claim
+        assert len(b.cancelled) == 2            # but its own legs must not keep selling
         assert b.positions() == {"NVDA": 49.0}
+        notices = at.load_notices("2026-11-09")
+        assert len(notices) == 1 and notices[0]["symbol"] == "NVDA"
+        assert "49" in notices[0]["text"] and "by hand" in notices[0]["text"]
+        _due(b)
+        assert len(at.load_notices("2026-11-09")) == 1      # not repeated
+
+    def test_disowning_is_caught_mid_session_not_only_at_the_close(self):
+        b = FakeBroker(quotes=Q)
+        _run(b)
+        b.user_trade("NVDA", "buy", 100)
+        b.user_trade("NVDA", "sell", 49)        # ledger: the remaining 100 are the user's
+        assert at.maybe_flatten(broker=b, cfg=_cfg(), now=MON_11) == []
+        assert len(b.cancelled) == 2 and b.market_orders == []
+        assert b.positions() == {"NVDA": 100.0}
+
+    def test_notices_appear_in_status(self, monkeypatch):
+        from config.settings import settings
+        monkeypatch.setattr(settings, "auto_trade_require_persistent_store", False)
+        today = datetime.now(tz=ET).date().isoformat()
+        at.add_notice("NVDA", "check this", today)
+        at.add_notice("OLD", "ancient", "2000-01-01")
+        assert [n["symbol"] for n in at.status()["notices"]] == ["NVDA"]
 
     def test_orphan_legs_with_no_position_are_cancelled(self):
         b = FakeBroker(quotes=Q)
@@ -1199,6 +1263,32 @@ class TestOwnership:
         b.user_trade("NVDA", "sell", 49)        # position gone, legs somehow still live
         assert _due(b) == []
         assert len(b.cancelled) == 2 and b.market_orders == []
+
+    def test_recount_after_cancel_survives_one_failed_read(self):
+        b = FakeBroker(quotes=Q)
+        _run(b)
+        real, n = b.account_orders, {"n": 0}
+        def flaky(since):
+            n["n"] += 1
+            if n["n"] == 2:                      # the read right after the cancels
+                raise RuntimeError("alpaca 503")
+            return real(since)
+        b.account_orders = flaky
+        assert _due(b) == ["NVDA"] and b.positions() == {}
+
+    def test_recount_that_keeps_failing_is_retried_on_the_next_tick(self):
+        b = FakeBroker(quotes=Q)
+        _run(b)
+        real, n = b.account_orders, {"n": 0}
+        def down_after_first(since):
+            n["n"] += 1
+            if n["n"] > 1:
+                raise RuntimeError("alpaca 503")
+            return real(since)
+        b.account_orders = down_after_first
+        assert _due(b) == [] and b.market_orders == []
+        b.account_orders = real
+        assert _due(b) == ["NVDA"] and b.positions() == {}
 
     def test_partial_entry_fill(self):
         b = FakeBroker(quotes=Q)
@@ -1329,7 +1419,7 @@ class TestThrottleAndGuard:
         monkeypatch.setattr(main.time, "monotonic", lambda: clock["now"])
         monkeypatch.setattr(auto_trader, "maybe_flatten", flaky)
         assert run(enabled=True, ticks=20) == 20      # every 30s tick, despite one error
-        assert run(enabled=False, ticks=20) == 2      # every 300s
+        assert run(enabled=False, ticks=20) == 20     # same when the switch is off
 
 
 class TestPersistence:
@@ -1376,40 +1466,74 @@ class TestPersistence:
         assert at.set_paused(True) is True and r.data[at._PAUSED_KEY] == "1"
 
 
-class TestResumeOwner:
-    def _setup(self, monkeypatch, owner="me@example.com", secret="a-real-secret"):
+class TestResumeKey:
+    KEY = "correct-horse-battery-staple"
+
+    def _setup(self, monkeypatch, key=KEY):
         from config.settings import settings
-        monkeypatch.setattr(settings, "auto_trade_owner_email", owner)
-        monkeypatch.setattr(settings, "jwt_secret", secret)
+        monkeypatch.setattr(settings, "auto_trade_resume_key", key)
 
-    def _token(self, email):
-        from src.auth.users import _create_token
-        return {"Authorization": f"Bearer {_create_token('u1', email)}"}
-
-    def test_can_resume_rules(self, monkeypatch):
-        from config.settings import Settings
-        self._setup(monkeypatch, owner="")
-        assert at.can_resume({"email": "me@example.com"})[0] is False
-        self._setup(monkeypatch, secret=Settings.model_fields["jwt_secret"].default)
-        assert at.can_resume({"email": "me@example.com"})[0] is False
+    def test_rules(self, monkeypatch):
+        self._setup(monkeypatch, key="")
+        assert at.can_resume(self.KEY)[0] is False and at.resume_available()[0] is False
+        self._setup(monkeypatch, key="short")
+        assert at.can_resume("short")[0] is False          # too weak to count as set
         self._setup(monkeypatch)
-        assert at.can_resume({"email": "someone@else.com"})[0] is False
         assert at.can_resume(None)[0] is False
-        assert at.can_resume({"email": " Me@Example.com "}) == (True, "")
+        assert at.can_resume("")[0] is False
+        assert at.can_resume(self.KEY + "x")[0] is False
+        assert at.can_resume(self.KEY) == (True, "")
 
-    def test_owner_can_resume_and_others_cannot(self, monkeypatch):
+    def test_a_site_login_is_not_enough(self, monkeypatch):
+        """Accounts are self-registered: a valid token for any email, even the
+        owner's, must not clear the pause."""
+        from config.settings import settings
+        from src.auth.users import _create_token
+        self._setup(monkeypatch)
+        monkeypatch.setattr(settings, "jwt_secret", "x" * 40)
+        c = TestRoutes()._client()
+        c.post("/trading/auto/pause")
+        token = _create_token("u1", "owner@example.com")
+        r = c.post("/trading/auto/resume", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 403 and at.is_paused()
+
+    def test_right_key_resumes(self, monkeypatch):
         self._setup(monkeypatch)
         c = TestRoutes()._client()
         c.post("/trading/auto/pause")
-        assert c.post("/trading/auto/resume", headers=self._token("stranger@x.com")).status_code == 403
-        assert at.is_paused()
-        r = c.post("/trading/auto/resume", headers=self._token("me@example.com"))
+        r = c.post("/trading/auto/resume", headers={"X-Resume-Key": self.KEY})
         assert r.status_code == 200 and r.json()["paused"] is False
 
-    def test_resume_disabled_until_owner_is_configured(self, monkeypatch):
-        self._setup(monkeypatch, owner="")
+    def test_disabled_until_a_key_is_configured(self, monkeypatch):
+        self._setup(monkeypatch, key="")
         c = TestRoutes()._client()
         c.post("/trading/auto/pause")
-        r = c.post("/trading/auto/resume", headers=self._token("me@example.com"))
-        assert r.status_code == 403 and "AUTO_TRADE_OWNER_EMAIL" in r.json()["detail"]
-        assert at.is_paused()
+        r = c.post("/trading/auto/resume", headers={"X-Resume-Key": self.KEY})
+        assert r.status_code == 403 and "AUTO_TRADE_RESUME_KEY" in r.json()["detail"]
+        assert at.is_paused() and "AUTO_TRADE_RESUME_KEY" in at.status()["resume_hint"]
+
+
+class TestHaltDurability:
+    def test_halt_write_is_retried(self, monkeypatch):
+        r = FakeRedis()
+        real_set, n = r.set, {"n": 0}
+        def flaky(k, v):
+            if k == at._STATE_KEY:
+                n["n"] += 1
+                if n["n"] < 3:
+                    raise TimeoutError()
+            real_set(k, v)
+        r.set = flaky
+        monkeypatch.setattr(at, "_get_redis", lambda: r)
+        b = FakeBroker(equity=99_800.0, quotes=Q)
+        _run(b, cfg=_cfg(require_persistent_store=True))
+        assert "daily loss limit" in r.data[at._STATE_KEY]
+        at._MEM.clear(); at._UNSYNCED.clear()               # restart
+        assert at.load_state().halted
+
+    def test_save_state_reports_durability(self, monkeypatch):
+        r = FakeRedis()
+        monkeypatch.setattr(at, "_get_redis", lambda: r)
+        assert at.save_state(at.DayState(date="2026-11-09")) is True
+        r.fail_set = True
+        assert at.save_state(at.DayState(date="2026-11-09", halted="x")) is False
