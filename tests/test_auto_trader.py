@@ -25,6 +25,10 @@ TUE_10 = datetime(2026, 11, 10, 10, 0, tzinfo=ET)
 def _isolated(monkeypatch):
     monkeypatch.setattr(at, "_get_redis", lambda: None)
     monkeypatch.setattr(at.time, "sleep", lambda s: None)
+    # status() reports data freshness; tests must not go to the network for it
+    monkeypatch.setattr(at, "_data_delay", lambda: {"session_active": False,
+                                                   "delay_minutes": None, "delayed": False,
+                                                   "note": ""})
     at._MEM.clear()
     at._UNSYNCED.clear()
     at._last_stale_check = float("-inf")

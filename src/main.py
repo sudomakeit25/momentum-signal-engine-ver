@@ -361,6 +361,19 @@ def _refresh_loop():
             except Exception as e:
                 logger.warning("Catalyst watch scan failed: %s", e)
 
+            # Pre-market gap list: keep it warm, and from 9:00 ET log the gaps
+            # to the scorecard so we learn whether such gaps continue or fade.
+            try:
+                from datetime import datetime as _dt
+                from src.scanner import premarket, scorecard as _sc
+                et_now = _dt.now(tz=premarket.ET)
+                if et_now.weekday() < 5 and premarket.PRE_OPEN <= et_now.time() < premarket.CLOSE:
+                    gaps = premarket.scan_premarket_gaps()
+                    if et_now.hour >= 9 and gaps.get("gaps"):
+                        _score(_sc, premarket.scorecard_alerts(gaps))
+            except Exception as e:
+                logger.warning("Pre-market scan failed: %s", e)
+
             # Fill in what happened after each logged alert (throttled inside).
             try:
                 from src.scanner import scorecard
@@ -407,6 +420,7 @@ def _intraday_scan_loop():
     from src.scanner import scorecard, spike_reversal
     from src.trading import auto_trader
     from src.notifications.dispatcher import (
+        alert_label,
         dispatch_alerts,
         dispatch_intraday_patterns,
         dispatch_intraday_watches,
@@ -434,6 +448,15 @@ def _intraday_scan_loop():
                 seen_keys = set()
                 seen_date = today_str
                 save_intraday_seen(seen_keys, seen_date)
+
+            # Everything this loop sends is built from bars that may be behind
+            # the market (15 minutes on the free data plan). Measure it once
+            # per cycle and put it in the header of every alert.
+            try:
+                from src.data import freshness
+                delay_suffix = freshness.label()
+            except Exception:
+                delay_suffix = ""
 
             symbols = _intraday_universe(top_n=100)
             if not symbols:
@@ -464,7 +487,8 @@ def _intraday_scan_loop():
             if new_patterns:
                 logger.info("Dispatching %d new intraday patterns", len(new_patterns))
                 try:
-                    result = dispatch_intraday_patterns(new_patterns)
+                    with alert_label(delay_suffix):
+                        result = dispatch_intraday_patterns(new_patterns)
                     logger.info(
                         "Intraday dispatch result: sms=%s push=%s",
                         result.get("sms"), result.get("push"),
@@ -512,7 +536,8 @@ def _intraday_scan_loop():
                     except Exception as e:
                         logger.warning("Auto-trader failed: %s", e)
                     try:
-                        result = dispatch_alerts(new_setups)
+                        with alert_label(delay_suffix):
+                            result = dispatch_alerts(new_setups)
                         logger.info(
                             "Movers dispatch result: webhook=%s sms=%s",
                             result.get("webhook"), result.get("sms"),
@@ -534,7 +559,8 @@ def _intraday_scan_loop():
                 if new_watches:
                     logger.info("Dispatching %d new setup watches", len(new_watches))
                     try:
-                        result = dispatch_intraday_watches(new_watches)
+                        with alert_label(delay_suffix):
+                            result = dispatch_intraday_watches(new_watches)
                         logger.info(
                             "Watch dispatch result: sms=%s push=%s",
                             result.get("sms"), result.get("push"),

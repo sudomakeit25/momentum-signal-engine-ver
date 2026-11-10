@@ -83,6 +83,25 @@ def scanner_spike_watch():
     return scan_spikes_reversals()
 
 
+@router.get("/data/freshness")
+def data_freshness():
+    """How far behind the market the price data is right now, measured from
+    the newest bar. The free data plan delays full-market bars 15 minutes."""
+    from src.data import freshness
+    return freshness.data_delay()
+
+
+@router.get("/scanner/premarket-gaps")
+def scanner_premarket_gaps(
+    min_gap_pct: float = Query(default=2.0, ge=0.5, le=50),
+):
+    """Stocks gapping before the open on real volume, with the headline and
+    whether the company just reported. After the open it stays as the day's
+    gap list and shows where each stock is now."""
+    from src.scanner.premarket import scan_premarket_gaps
+    return scan_premarket_gaps(min_gap_pct=min_gap_pct)
+
+
 @router.get("/scorecard")
 def scorecard_report(days: int = Query(default=30, ge=1, le=90)):
     """How each kind of alert actually did: share that went the alert's way

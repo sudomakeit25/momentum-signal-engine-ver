@@ -1075,6 +1075,14 @@ def maybe_flatten(
     return closed
 
 
+def _data_delay() -> dict:
+    try:
+        from src.data import freshness
+        return freshness.data_delay()
+    except Exception:
+        return {"session_active": False, "delay_minutes": None, "delayed": False, "note": ""}
+
+
 def status() -> dict:
     """Snapshot for the API: config, switches, and today's log. Makes no
     broker call, so it is safe to poll."""
@@ -1112,6 +1120,7 @@ def status() -> dict:
         "store_ok": store_ok,
         "resume_hint": resume_available()[1],
         "notices": load_notices((_now_et(None) - timedelta(days=7)).date().isoformat()),
+        "data_delay": _data_delay(),
         "config": cfg.to_dict(),
         "date": state.date,
         "halted": state.halted,

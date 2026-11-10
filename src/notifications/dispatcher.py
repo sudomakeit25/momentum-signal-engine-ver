@@ -1,5 +1,7 @@
 """Notification dispatcher: webhook (Discord/Telegram/Slack) + SMS (Twilio / Email Gateway)."""
 
+import contextlib
+import contextvars
 import hashlib
 import logging
 import json
@@ -81,6 +83,22 @@ def _fingerprint_of_body(body: str) -> str:
 _EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
+# Suffix for alert headers, set by the caller for the duration of a dispatch
+# (for example " (15m delayed)"). A ContextVar so the scan loops, which run
+# on separate threads, cannot leak a label into each other's messages.
+_header_suffix: contextvars.ContextVar[str] = contextvars.ContextVar("mse_header_suffix", default="")
+
+
+@contextlib.contextmanager
+def alert_label(suffix: str):
+    """Append `suffix` to the header of every alert formatted inside."""
+    token = _header_suffix.set(suffix or "")
+    try:
+        yield
+    finally:
+        _header_suffix.reset(token)
+
+
 def _intraday_arrow(pattern_type: str) -> str:
     """Compact glyph for SMS / push body lines."""
     return {
@@ -101,7 +119,7 @@ def _format_intraday_body(patterns: list, header: str | None = None) -> str:
             if len(patterns) == 1
             else f"MSE Intraday: {len(patterns)} patterns"
         )
-    lines = [header]
+    lines = [header + _header_suffix.get()]
     for p in patterns[:5]:
         glyph = _intraday_arrow(p.pattern_type)
         lines.append(
@@ -237,7 +255,8 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
 def _format_watch_body(watches: list) -> str:
     """Short SMS / push body for forming-setup watches. Carrier gateways cap
     at 160 chars, so lines are added only while they fit."""
-    lines = ["MSE Watch" if len(watches) == 1 else f"MSE Watch: {len(watches)}"]
+    lines = [("MSE Watch" if len(watches) == 1 else f"MSE Watch: {len(watches)}")
+             + _header_suffix.get()]
     for w in watches:
         if w.watch_type == "box_forming":
             line = f"{w.symbol} box {w.lower:.2f}-{w.upper:.2f}, watch break"
@@ -595,7 +614,7 @@ def _format_sms_body(signals: list) -> str:
     """
     deduped = _deduped_signals_for_sms(signals)
     deduped.sort(key=lambda s: getattr(s, "confidence", 0), reverse=True)
-    lines = ["MSE Alert"]
+    lines = ["MSE Alert" + _header_suffix.get()]
     for s in deduped:
         arrow = "+" if s.action.value == "BUY" else "-"
         line = f"{arrow}{s.symbol} {s.action.value} ${s.entry:.2f} {s.confidence*100:.0f}%"

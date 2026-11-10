@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { Activity } from "lucide-react";
-import { useSpikeWatch, type SpikeEvent } from "@/hooks/use-spike-watch";
+import {
+  usePremarketGaps,
+  useSpikeWatch,
+  type PremarketGap,
+  type SpikeEvent,
+} from "@/hooks/use-spike-watch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DataDelayBanner } from "@/components/data/data-delay-banner";
 import { cn } from "@/lib/utils";
 
 const KIND_LABEL: Record<string, string> = {
@@ -68,6 +74,51 @@ function EventCard({ e }: { e: SpikeEvent }) {
   );
 }
 
+function fmtShares(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+  return String(v);
+}
+
+function GapRow({ g, opened }: { g: PremarketGap; opened: boolean }) {
+  const up = g.gap_pct >= 0;
+  // After the open: has the stock kept, extended or given back the gap?
+  const kept = opened ? g.now_pct - g.gap_pct : 0;
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Sym symbol={g.symbol} />
+          <span className={cn("font-medium", up ? "text-emerald-400" : "text-red-400")}>
+            {pct(g.gap_pct)}
+          </span>
+          {g.reported && (
+            <span
+              title={g.surprise_pct != null ? `EPS surprise ${g.surprise_pct}%` : "Reported earnings"}
+              className="rounded border border-yellow-500/30 bg-yellow-500/20 px-1 text-[10px] text-yellow-400"
+            >
+              REPORTED
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-zinc-500">
+          ${g.price.toFixed(2)} from ${g.prior_close.toFixed(2)} · {fmtShares(g.pre_volume)} shares (
+          {g.day_share_pct.toFixed(1)}% of a normal day)
+        </span>
+      </div>
+      {opened && (
+        <p className="mt-1 text-xs text-zinc-400">
+          Now {pct(g.now_pct)} on the day:{" "}
+          <span className={kept * (up ? 1 : -1) >= 0 ? "text-emerald-400" : "text-amber-400"}>
+            {Math.abs(kept) < 0.3 ? "holding the gap" : kept * (up ? 1 : -1) > 0 ? "extended" : "fading"}
+          </span>
+        </p>
+      )}
+      <Headline text={g.headline} />
+    </div>
+  );
+}
+
 function Section({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
@@ -86,6 +137,9 @@ function Empty({ text }: { text: string }) {
 
 export default function SpikeWatchPage() {
   const { data, isLoading, isError } = useSpikeWatch();
+  const premarket = usePremarketGaps();
+  const gaps = premarket.data?.gaps ?? [];
+  const opened = premarket.data?.phase === "open" || premarket.data?.phase === "after";
 
   const spikes = (data?.events ?? []).filter((e) => e.kind === "volume_ignition");
   const reversals = (data?.events ?? []).filter((e) => e.kind !== "volume_ignition");
@@ -98,6 +152,8 @@ export default function SpikeWatchPage() {
         <span className="text-xs text-zinc-500">sudden spikes and reversals</span>
       </div>
 
+      <DataDelayBanner />
+
       {(data?.notes ?? []).map((n) => (
         <div key={n} className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-400">
           {n}
@@ -108,6 +164,24 @@ export default function SpikeWatchPage() {
           Could not load the scan.
         </div>
       )}
+
+      <Section
+        title={`${opened ? "This morning's gaps" : "Pre-market gaps"} (${gaps.length})`}
+        hint="Gapping 2% or more before the open, with a meaningful slice of a normal day already traded."
+      >
+        {(premarket.data?.notes ?? []).map((n) => (
+          <p key={n} className="text-xs text-amber-400">{n}</p>
+        ))}
+        {premarket.isLoading ? (
+          <Skeleton className="h-14 w-full" />
+        ) : gaps.length ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {gaps.map((g) => <GapRow key={g.symbol} g={g} opened={opened} />)}
+          </div>
+        ) : premarket.data?.phase === "closed" ? null : (
+          <Empty text="No qualifying gaps." />
+        )}
+      </Section>
 
       {isLoading ? (
         <div className="space-y-2">

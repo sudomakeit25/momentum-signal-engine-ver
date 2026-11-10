@@ -50,6 +50,41 @@ export function useSpikeWatch() {
   });
 }
 
+export interface PremarketGap {
+  symbol: string;
+  name: string;
+  direction: "up" | "down";
+  gap_pct: number;
+  prior_close: number;
+  price: number;
+  pre_volume: number;
+  day_share_pct: number;
+  time: string;
+  open_price: number | null;
+  now_pct: number;
+  reported: boolean;
+  surprise_pct: number | null;
+  headline?: string;
+}
+
+export interface PremarketGaps {
+  gaps: PremarketGap[];
+  data_ok: boolean;
+  notes: string[];
+  phase: "closed" | "premarket" | "open" | "after" | "";
+  as_of: string;
+  data_as_of?: string;
+  delay_minutes?: number | null;
+}
+
+export function usePremarketGaps() {
+  return useQuery({
+    queryKey: ["premarket-gaps"],
+    queryFn: () => apiFetch<PremarketGaps>("/scanner/premarket-gaps"),
+    refetchInterval: 2 * 60_000,
+  });
+}
+
 export interface HorizonStat {
   n: number;
   win_pct: number | null;

@@ -6,6 +6,7 @@ import { AlertTriangle, Zap } from "lucide-react";
 import { useIntradayMovers } from "@/hooks/use-intraday-movers";
 import { SetupTypeBadge } from "@/components/scanner/setup-type-badge";
 import { AutoTraderPanel } from "@/components/trading/auto-trader-panel";
+import { DataDelayBanner } from "@/components/data/data-delay-banner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,6 +81,8 @@ export default function IntradayMoversPage() {
           </div>
         </div>
       </div>
+
+      <DataDelayBanner />
 
       <AutoTraderPanel />
 
