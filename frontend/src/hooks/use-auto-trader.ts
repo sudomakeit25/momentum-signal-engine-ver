@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, apiPost } from "@/lib/api";
+import { apiFetch, apiPost, apiPostJson } from "@/lib/api";
+import { getAuthToken } from "@/hooks/use-auth";
 
 export interface AutoTrade {
   time: string;
@@ -31,6 +32,8 @@ export interface AutoTraderStatus {
   enabled: boolean;
   paused: boolean;
   paper: boolean;
+  store_ok: boolean;
+  resume_hint: string;
   config: {
     risk_per_trade_usd: number;
     max_position_usd: number;
@@ -43,7 +46,6 @@ export interface AutoTraderStatus {
   };
   date: string;
   halted: string;
-  flattened: boolean;
   trades: AutoTrade[];
   skips: AutoSkip[];
 }
@@ -59,10 +61,18 @@ export function useAutoTrader() {
 export function useAutoTraderPause() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (pause: boolean) =>
-      apiPost<AutoTraderStatus>(
-        pause ? "/trading/auto/pause" : "/trading/auto/resume"
-      ),
+    // Pausing is open (it can only make the bot safer). Resuming needs a
+    // logged-in user, so it sends the session token.
+    mutationFn: async (pause: boolean) => {
+      if (pause) return apiPost<AutoTraderStatus>("/trading/auto/pause");
+      const token = getAuthToken();
+      if (!token) throw new Error("Log in to resume the auto-trader");
+      return apiPostJson<AutoTraderStatus>(
+        "/trading/auto/resume",
+        {},
+        { Authorization: `Bearer ${token}` }
+      );
+    },
     onSuccess: (data) => queryClient.setQueryData(["auto-trader"], data),
   });
 }

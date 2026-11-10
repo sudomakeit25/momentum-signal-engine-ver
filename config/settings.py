@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     auto_trade_min_confidence: float = 0.6
     auto_trade_max_chase_frac: float = 0.25        # live price may drift this share of risk past entry
     auto_trade_min_rr_at_quote: float = 1.2        # reward:risk recomputed at the live quote
+    auto_trade_require_earnings_check: bool = True  # no trade if the earnings calendar could not be read
+    auto_trade_require_persistent_store: bool = True  # refuse to run without Redis (pause/halt must survive restarts)
+    auto_trade_owner_email: str = ""               # the one account allowed to resume a paused bot via the API
     auto_trade_last_entry_et: str = "15:30"        # no new entries from this time
     auto_trade_flatten_et: str = "15:45"           # close the bot's positions from this time
 

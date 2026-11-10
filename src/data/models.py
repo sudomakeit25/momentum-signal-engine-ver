@@ -92,6 +92,7 @@ class IntradayResult(BaseModel):
     vwap_dist_pct: float       # % distance of last price from session VWAP
     score: float
     earnings_soon: bool = False  # reports today/tomorrow (FMP calendar)
+    earnings_known: bool = True  # False when the calendar could not be read
     signals: list[Signal] = []
     setup_types: list[SetupType] = []
     watches: list[IntradayWatch] = []

@@ -20,6 +20,7 @@ export function AutoTraderPanel() {
 
   if (isError || !data) return null;
 
+  // Any mode not listed (refusing, stopped) is a problem state: show it red.
   const style = MODE_STYLE[data.mode] ?? MODE_STYLE.halted;
   const c = data.config;
 
@@ -33,13 +34,13 @@ export function AutoTraderPanel() {
             {data.mode}
           </span>
           <span className="text-zinc-500">
-            {data.trades.length}/{c.max_trades_per_day} trades today · $
+            {data.date} · {data.trades.length}/{c.max_trades_per_day} trades logged · $
             {c.risk_per_trade_usd} risk per trade · max {c.max_open_positions} open ·
             halts at -${c.daily_loss_limit_usd} · no entries after {c.last_entry} ET ·
             flat by {c.flatten_at} ET
           </span>
         </div>
-        {data.enabled && (
+        {data.enabled && !(data.paused && data.resume_hint) && (
           <Button
             variant="outline"
             size="sm"
@@ -59,6 +60,17 @@ export function AutoTraderPanel() {
         </p>
       )}
       {data.halted && <p className="mt-2 text-red-400">Stopped for today: {data.halted}</p>}
+      {data.paused && data.resume_hint && (
+        <p className="mt-2 text-amber-400">Paused. From this page, {data.resume_hint}.</p>
+      )}
+      {!data.store_ok && (
+        <p className="mt-2 text-red-400">
+          The state store cannot be read, so no orders are being placed.
+        </p>
+      )}
+      {pause.isError && (
+        <p className="mt-2 text-red-400">{(pause.error as Error).message}</p>
+      )}
 
       {data.trades.length > 0 && (
         <table className="mt-2 w-full tabular-nums">

@@ -16,6 +16,7 @@ from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
 import logging
+import math
 
 import pandas as pd
 
@@ -90,6 +91,8 @@ def _make_signal(
 ) -> Signal | None:
     """Build a Signal, enforcing the checklist's R:R floor. Returns None if the
     geometry does not pay (risking 0.5% to make 0.5% loses to win-rate math)."""
+    if not all(math.isfinite(v) for v in (entry, stop, target)):
+        return None   # NaN compares False to everything and would slip through
     risk = entry - stop if action == SignalAction.BUY else stop - entry
     reward = target - entry if action == SignalAction.BUY else entry - target
     if risk <= 0 or reward <= 0:
@@ -444,6 +447,25 @@ HIGH_BETA_EXTRAS = [
 ]
 
 
+def _earnings_lookup(symbols: list[str]) -> tuple[set[str], bool]:
+    """Symbols reporting today or tomorrow, and whether the lookup worked.
+
+    The calendar client returns an empty list on any failure (missing key,
+    HTTP error), so an empty market-wide calendar is treated as "unknown",
+    not as "nobody reports". Callers that act on the flag can then refuse.
+    """
+    try:
+        from src.scanner import earnings_whisper as ew
+
+        if not ew.get_earnings_calendar(days_ahead=1):
+            return set(), False
+        events = ew.get_upcoming_earnings(symbols, days_ahead=1)
+        return {e.symbol for e in events}, True
+    except Exception as e:
+        logger.debug("Earnings lookup failed: %s", e)
+        return set(), False
+
+
 def _intraday_universe(symbols: list[str] | None) -> list[str]:
     if symbols:
         base = list(symbols)
@@ -598,16 +620,9 @@ def scan_intraday(
     # Checklist item 5: earnings check. A 0.5% scalp that accidentally
     # becomes an earnings hold is how small trades become big losses.
     if results:
-        try:
-            from src.scanner.earnings_whisper import get_upcoming_earnings
-
-            events = get_upcoming_earnings(
-                [r.symbol for r in results], days_ahead=1
-            )
-            reporting = {e.symbol for e in events}
-            for r in results:
-                r.earnings_soon = r.symbol in reporting
-        except Exception as e:
-            logger.debug("Earnings flag skipped: %s", e)
+        reporting, known = _earnings_lookup([r.symbol for r in results])
+        for r in results:
+            r.earnings_soon = r.symbol in reporting
+            r.earnings_known = known
 
     return results

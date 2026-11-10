@@ -398,16 +398,6 @@ def _intraday_scan_loop():
 
     while not _stop_event.is_set():
         try:
-            # Auto-trader end-of-day close. Must run before the market-hours
-            # gate below: that gate shuts at 15:45 ET, which is exactly when
-            # the bot's positions are due to be flattened.
-            try:
-                closed = auto_trader.maybe_flatten()
-                if closed:
-                    logger.info("Auto-trader closed %d positions: %s", len(closed), closed)
-            except Exception as e:
-                logger.warning("Auto-trader flatten check failed: %s", e)
-
             if not _is_market_hours_et():
                 _stop_event.wait(_INTRADAY_INTERVAL)
                 continue
@@ -534,6 +524,31 @@ def _intraday_scan_loop():
         _stop_event.wait(_INTRADAY_INTERVAL)
 
 
+def _auto_trade_guard_loop():
+    """Closes the auto-trader's own positions before the bell.
+
+    Separate from the 5-minute scan loop on purpose: the close has a short
+    window, and a slow scan must not be able to miss it. Wakes every 30
+    seconds (every 5 minutes while the bot is switched off, when it only
+    needs to catch a position left from before it was switched off).
+    `maybe_flatten` itself makes no broker call outside session hours.
+    """
+    from src.trading import auto_trader
+
+    last_run = 0.0
+    while not _stop_event.is_set():
+        try:
+            interval = 30 if auto_trader.get_config().enabled else 300
+            if time.monotonic() - last_run >= interval:
+                last_run = time.monotonic()
+                closed = auto_trader.maybe_flatten()
+                if closed:
+                    logger.info("Auto-trader closing: %s", closed)
+        except Exception as e:
+            logger.warning("Auto-trader guard failed: %s", e)
+        _stop_event.wait(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start background refresh thread
@@ -541,6 +556,8 @@ async def lifespan(app: FastAPI):
     thread.start()
     # Intraday-pattern scan thread (5-min cadence, market hours only)
     threading.Thread(target=_intraday_scan_loop, daemon=True).start()
+    # Auto-trader end-of-day close (30s cadence, no-op unless it owns positions)
+    threading.Thread(target=_auto_trade_guard_loop, daemon=True).start()
     # Warm the yfinance cache in a separate thread so startup is not blocked
     threading.Thread(target=_warm_profile_cache_on_startup, daemon=True).start()
     yield

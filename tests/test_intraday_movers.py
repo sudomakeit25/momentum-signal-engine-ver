@@ -267,13 +267,10 @@ class TestScanIntraday:
         def fake_intraday_bars(symbols, minutes_back=400, timeframe_minutes=5):
             return {"MOVR": mover_5m, "QUIET": quiet_5m}
 
-        def fake_earnings(symbols, days_ahead=1):
-            return []
 
         monkeypatch.setattr(mod.client, "get_multi_bars", fake_multi_bars)
         monkeypatch.setattr(mod.client, "get_intraday_multi_bars", fake_intraday_bars)
-        import src.scanner.earnings_whisper as ew
-        monkeypatch.setattr(ew, "get_upcoming_earnings", fake_earnings)
+        monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (set(), True))
         results = mod.scan_intraday(
             symbols=["MOVR", "QUIET", "BTC/USD"],
             check_spread=False,
@@ -446,10 +443,11 @@ class TestUniverse:
 
 
 class TestScanWatches:
+    reporting: set = set()
+    known: bool = True
+
     def _run(self, monkeypatch, five_min):
         from src.scanner import intraday_movers as mod
-        import src.scanner.earnings_whisper as ew
-
         day_idx = pd.DatetimeIndex(
             [datetime(2026, 9, 1, tzinfo=UTC) + timedelta(days=i) for i in range(40)]
         )
@@ -461,7 +459,7 @@ class TestScanWatches:
                             lambda symbols, timeframe=None, days=200: {"MOVR": daily.copy()})
         monkeypatch.setattr(mod.client, "get_intraday_multi_bars",
                             lambda symbols, minutes_back=400, timeframe_minutes=5: {"MOVR": five_min})
-        monkeypatch.setattr(ew, "get_upcoming_earnings", lambda symbols, days_ahead=1: [])
+        monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (self.reporting, self.known))
         return mod.scan_intraday(symbols=["MOVR"], check_spread=False, now=NOW)
 
     def test_intact_box_surfaces_as_watch(self, monkeypatch):
@@ -539,3 +537,54 @@ class TestWatchDispatch:
         monkeypatch.setattr(rs, "get_push_tokens", lambda: {})
         assert d.dispatch_intraday_watches([self._watch()])["sms"] is False
         assert sent == []
+
+
+# ------------------------------------------------------- earnings + NaN guards
+
+class TestEarningsFlag:
+    def _scan(self, monkeypatch, reporting, known):
+        helper = TestScanWatches()
+        helper.reporting, helper.known = reporting, known
+        five_min = _forming_box()
+        five_min["volume"] = 2_000_000
+        return helper._run(monkeypatch, five_min)[0]
+
+    def test_reporting_symbol_is_flagged(self, monkeypatch):
+        r = self._scan(monkeypatch, {"MOVR"}, True)
+        assert r.earnings_soon is True and r.earnings_known is True
+
+    def test_failed_lookup_is_marked_unknown_not_clear(self, monkeypatch):
+        r = self._scan(monkeypatch, set(), False)
+        assert r.earnings_soon is False and r.earnings_known is False
+
+    def test_empty_calendar_counts_as_unknown(self, monkeypatch):
+        import src.scanner.earnings_whisper as ew
+        from src.scanner import intraday_movers as mod
+        monkeypatch.setattr(ew, "get_earnings_calendar", lambda days_ahead=1: [])
+        assert mod._earnings_lookup(["NVDA"]) == (set(), False)
+
+    def test_lookup_exception_counts_as_unknown(self, monkeypatch):
+        import src.scanner.earnings_whisper as ew
+        from src.scanner import intraday_movers as mod
+        def boom(days_ahead=1):
+            raise RuntimeError("503")
+        monkeypatch.setattr(ew, "get_earnings_calendar", boom)
+        assert mod._earnings_lookup(["NVDA"]) == (set(), False)
+
+    def test_working_lookup(self, monkeypatch):
+        import src.scanner.earnings_whisper as ew
+        from src.scanner import intraday_movers as mod
+        from types import SimpleNamespace as NS
+        monkeypatch.setattr(ew, "get_earnings_calendar", lambda days_ahead=1: [{"symbol": "X"}])
+        monkeypatch.setattr(ew, "get_upcoming_earnings",
+                            lambda symbols, days_ahead=1: [NS(symbol="NVDA")])
+        assert mod._earnings_lookup(["NVDA", "AMD"]) == ({"NVDA"}, True)
+
+
+def test_make_signal_rejects_non_finite_levels():
+    from src.scanner.intraday_movers import _make_signal
+    nan = float("nan")
+    for entry, stop, target in [(nan, 99.0, 102.0), (100.0, nan, 102.0), (100.0, 99.0, nan),
+                                (100.0, 99.0, float("inf"))]:
+        assert _make_signal("X", SignalAction.BUY, SetupType.HIGHER_LOW, "r", entry, stop,
+                            target, 0.6, NOW, 1.5) is None

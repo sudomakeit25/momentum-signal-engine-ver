@@ -3,7 +3,7 @@
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, Query
 
 from src.backtest.engine import run_backtest
 from src.data import client
@@ -1673,18 +1673,35 @@ def trading_auto_status():
 
 @router.post("/trading/auto/pause")
 def trading_auto_pause():
-    """Kill switch: stop new entries. Open positions are still closed at the
-    end-of-day flatten time."""
+    """Kill switch: stop new entries. Open to anyone, because it can only
+    make the bot safer. Open positions are still closed at the end-of-day
+    flatten time."""
+    from fastapi import HTTPException
     from src.trading import auto_trader
-    auto_trader.set_paused(True)
+    durable = auto_trader.set_paused(True)
+    if not durable and auto_trader.has_persistent_store():
+        # Paused in this process, but a restart would lose it. Say so.
+        raise HTTPException(
+            status_code=503,
+            detail="Paused for now, but the pause could not be saved; it would "
+                   "be lost on a restart. Try again.",
+        )
     return auto_trader.status()
 
 
 @router.post("/trading/auto/resume")
-def trading_auto_resume():
-    """Clear the pause. Does not enable trading if the master switch is off."""
+def trading_auto_resume(authorization: str = Header(default="")):
+    """Clear the pause. Only the configured owner account may do this, and
+    it never enables trading if the master switch is off."""
+    from fastapi import HTTPException
+    from src.auth.deps import get_current_user
     from src.trading import auto_trader
-    auto_trader.set_paused(False)
+    user = get_current_user(authorization)
+    allowed, why = auto_trader.can_resume(user)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=why)
+    if not auto_trader.set_paused(False) and auto_trader.has_persistent_store():
+        raise HTTPException(status_code=503, detail="Could not save the change. Try again.")
     return auto_trader.status()
 
 
