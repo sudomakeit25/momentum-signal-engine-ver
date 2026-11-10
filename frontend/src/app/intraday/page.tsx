@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, Zap } from "lucide-react";
 import { useIntradayMovers } from "@/hooks/use-intraday-movers";
 import { SetupTypeBadge } from "@/components/scanner/setup-type-badge";
+import { AutoTraderPanel } from "@/components/trading/auto-trader-panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,6 +80,8 @@ export default function IntradayMoversPage() {
           </div>
         </div>
       </div>
+
+      <AutoTraderPanel />
 
       {isLoading ? (
         <div className="space-y-2">

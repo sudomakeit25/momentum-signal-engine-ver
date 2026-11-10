@@ -382,6 +382,7 @@ def _intraday_scan_loop():
     )
     from src.scanner.intraday_patterns import scan_intraday_patterns
     from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
+    from src.trading import auto_trader
     from src.notifications.dispatcher import (
         dispatch_alerts,
         dispatch_intraday_patterns,
@@ -397,6 +398,16 @@ def _intraday_scan_loop():
 
     while not _stop_event.is_set():
         try:
+            # Auto-trader end-of-day close. Must run before the market-hours
+            # gate below: that gate shuts at 15:45 ET, which is exactly when
+            # the bot's positions are due to be flattened.
+            try:
+                closed = auto_trader.maybe_flatten()
+                if closed:
+                    logger.info("Auto-trader closed %d positions: %s", len(closed), closed)
+            except Exception as e:
+                logger.warning("Auto-trader flatten check failed: %s", e)
+
             if not _is_market_hours_et():
                 _stop_event.wait(_INTRADAY_INTERVAL)
                 continue
@@ -467,6 +478,20 @@ def _intraday_scan_loop():
                     len(movers), len(mover_signals), len(new_setups),
                 )
                 if new_setups:
+                    # Paper auto-trader first (the quote is freshest now).
+                    # No-op unless AUTO_TRADE_ENABLED is set and not paused.
+                    try:
+                        records = auto_trader.handle_new_setups(
+                            new_setups, {r.symbol: r for r in movers}
+                        )
+                        placed = [r for r in records if r.get("type") == "trade"]
+                        if records:
+                            logger.info(
+                                "Auto-trader: %d orders placed, %d setups skipped",
+                                len(placed), len(records) - len(placed),
+                            )
+                    except Exception as e:
+                        logger.warning("Auto-trader failed: %s", e)
                     try:
                         result = dispatch_alerts(new_setups)
                         logger.info(

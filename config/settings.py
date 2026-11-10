@@ -40,6 +40,22 @@ class Settings(BaseSettings):
     intraday_vwap_near_pct: float = 0.15          # "at VWAP" threshold
     intraday_vwap_far_pct: float = 0.60           # must have been this far away earlier
 
+    # Auto-trader: turns confirmed intraday setups into Alpaca PAPER bracket
+    # orders. Master switch is off by default and can only be turned on
+    # here (env var AUTO_TRADE_ENABLED); the API can pause it, never enable it.
+    auto_trade_enabled: bool = False
+    auto_trade_risk_per_trade_usd: float = 50.0    # dollars lost if the stop fills
+    auto_trade_max_position_usd: float = 5000.0    # cap on position value
+    auto_trade_max_trades_per_day: int = 5
+    auto_trade_max_open_positions: int = 3
+    auto_trade_daily_loss_limit_usd: float = 150.0  # account day P&L at which it halts
+    auto_trade_allow_shorts: bool = False
+    auto_trade_min_confidence: float = 0.6
+    auto_trade_max_chase_frac: float = 0.25        # live price may drift this share of risk past entry
+    auto_trade_min_rr_at_quote: float = 1.2        # reward:risk recomputed at the live quote
+    auto_trade_last_entry_et: str = "15:30"        # no new entries from this time
+    auto_trade_flatten_et: str = "15:45"           # close the bot's positions from this time
+
     # Twilio SMS
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

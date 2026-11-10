@@ -1660,6 +1660,34 @@ def trading_cancel_order(order_id: str):
     return cancel_order(order_id)
 
 
+# --- Auto-trader (paper) ---
+# The master switch is the AUTO_TRADE_ENABLED setting. These endpoints can
+# only pause and resume; resume has no effect while the master switch is off.
+
+@router.get("/trading/auto/status")
+def trading_auto_status():
+    """Auto-trader mode, limits, and today's trades and skipped setups."""
+    from src.trading import auto_trader
+    return auto_trader.status()
+
+
+@router.post("/trading/auto/pause")
+def trading_auto_pause():
+    """Kill switch: stop new entries. Open positions are still closed at the
+    end-of-day flatten time."""
+    from src.trading import auto_trader
+    auto_trader.set_paused(True)
+    return auto_trader.status()
+
+
+@router.post("/trading/auto/resume")
+def trading_auto_resume():
+    """Clear the pause. Does not enable trading if the master switch is off."""
+    from src.trading import auto_trader
+    auto_trader.set_paused(False)
+    return auto_trader.status()
+
+
 # --- Custom Screener Endpoints ---
 
 from src.scanner.custom_screener import run_custom_scan, get_available_filters
