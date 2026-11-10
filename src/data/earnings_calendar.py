@@ -43,6 +43,37 @@ _day_cache: dict[str, tuple[float, list[dict] | None]] = {}
 _last: dict = {"source": "", "nasdaq": {}, "at": ""}
 
 
+def _money(value) -> float | None:
+    """'$6,269,324,300' -> 6269324300.0, '($0.34)' -> -0.34, 'N/A' -> None."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("$", "").replace(",", "")
+    negative = s.startswith("(") and s.endswith(")")
+    s = s.strip("()")
+    try:
+        number = float(s)
+    except ValueError:
+        return None
+    return -number if negative else number
+
+
+def _number(value) -> float | None:
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def session_label(time_field: str) -> str:
+    """Nasdaq's time field as bmo (before open), amc (after close) or ''."""
+    t = (time_field or "").lower()
+    if "pre-market" in t:
+        return "bmo"
+    if "after-hours" in t:
+        return "amc"
+    return ""
+
+
 def _nasdaq_fetch(day: date) -> list[dict] | None:
     """Rows for one date, [] if nobody reports, None if the calendar could
     not be read."""
@@ -71,7 +102,16 @@ def _nasdaq_fetch(day: date) -> list[dict] | None:
             outcome["message"] = "rows is not a list"
             return None
         rows = [
-            {"symbol": str(r["symbol"]).upper().strip(), "time": str(r.get("time") or "")}
+            {
+                "symbol": str(r["symbol"]).upper().strip(),
+                "time": str(r.get("time") or ""),
+                "name": str(r.get("name") or ""),
+                "market_cap": _money(r.get("marketCap")),
+                "eps_forecast": _money(r.get("epsForecast")),
+                # Present only once the company has reported (past dates)
+                "eps": _money(r.get("eps")),
+                "surprise_pct": _number(r.get("surprise")),
+            }
             for r in raw if isinstance(r, dict) and r.get("symbol")
         ]
         outcome.update(ok=True, rows=len(rows))

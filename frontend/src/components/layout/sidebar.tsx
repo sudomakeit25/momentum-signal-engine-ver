@@ -53,6 +53,7 @@ import {
   Search,
   Briefcase,
   ListOrdered,
+  Flame,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/scanner", label: "Scanner", icon: ScanSearch },
       { href: "/intraday", label: "Intraday Movers", icon: Zap },
+      { href: "/catalyst-watch", label: "Catalyst Watch", icon: Flame },
       { href: "/instrument", label: "Instrument Search", icon: Rocket },
       { href: "/custom-screener", label: "Custom Screener", icon: SlidersHorizontal },
       { href: "/screener-presets", label: "Preset Screeners", icon: Rocket },

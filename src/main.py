@@ -347,6 +347,19 @@ def _refresh_loop():
                 logger.info("Short squeeze scan: %d candidates", len(squeeze))
             except Exception as e:
                 logger.warning("Short squeeze scan failed: %s", e)
+
+            # Warm the catalyst watch too: uncached it takes about half a
+            # minute, too long for a page load. It keeps its own 30-minute
+            # cache, so most cycles this returns immediately.
+            try:
+                from src.scanner.catalyst_watch import scan_catalyst_watch
+                watch = scan_catalyst_watch()
+                logger.info(
+                    "Catalyst watch: %d upcoming, %d reacting",
+                    len(watch["upcoming"]), len(watch["reacting"]),
+                )
+            except Exception as e:
+                logger.warning("Catalyst watch scan failed: %s", e)
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 

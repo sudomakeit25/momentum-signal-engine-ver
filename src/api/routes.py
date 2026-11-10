@@ -56,6 +56,24 @@ def health_data(probe: bool = Query(default=False)):
             "fmp": fmp_client.status()}
 
 
+@router.get("/scanner/catalyst-watch")
+def scanner_catalyst_watch(
+    days_ahead: int = Query(default=5, ge=1, le=10),
+    days_back: int = Query(default=5, ge=1, le=10),
+    min_days_to_cover: float = Query(default=3.0, ge=0),
+    min_market_cap: float = Query(default=300_000_000, ge=0),
+):
+    """Two lists: stocks with earnings in the next few sessions and heavy
+    short interest (set up to move hard, direction unknown), and stocks that
+    reported in the last few sessions and rose sharply on heavy volume.
+    The first uncached call takes about half a minute."""
+    from src.scanner.catalyst_watch import scan_catalyst_watch
+    return scan_catalyst_watch(
+        days_ahead=days_ahead, days_back=days_back,
+        min_days_to_cover=min_days_to_cover, min_market_cap=min_market_cap,
+    )
+
+
 @router.get("/intraday-screener", response_model=list[IntradayResult])
 def intraday_screener(
     top: int = Query(default=25, ge=1, le=100),
