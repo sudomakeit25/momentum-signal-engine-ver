@@ -12,11 +12,21 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import type { IntradayResult, Signal } from "@/types/api";
+import type { IntradayResult, IntradayWatch, Signal } from "@/types/api";
 
 function bestSignal(r: IntradayResult): Signal | null {
   if (!r.signals.length) return null;
   return [...r.signals].sort((a, b) => b.confidence - a.confidence)[0];
+}
+
+function watchLabel(w: IntradayWatch): string {
+  if (w.watch_type === "box_forming" && w.lower != null && w.upper != null) {
+    return `Box ${w.lower.toFixed(2)}-${w.upper.toFixed(2)}`;
+  }
+  if (w.watch_type === "vwap_tag" && w.upper != null) {
+    return `At VWAP ${w.upper.toFixed(2)}`;
+  }
+  return w.watch_type;
 }
 
 function fmtVol(v: number): string {
@@ -150,6 +160,15 @@ export default function IntradayMoversPage() {
                       {r.setup_types.map((t) => (
                         <SetupTypeBadge key={t} type={t} />
                       ))}
+                      {(r.watches ?? []).map((w) => (
+                        <span
+                          key={w.watch_type}
+                          title={w.detail}
+                          className="inline-flex items-center rounded border border-dashed border-zinc-500/50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400"
+                        >
+                          {watchLabel(w)}
+                        </span>
+                      ))}
                     </div>
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">
@@ -183,7 +202,9 @@ export default function IntradayMoversPage() {
         Setups shown: {" "}
         <em>Range Break</em> (tight 30-60 min box resolving on volume),{" "}
         <em>VWAP Reclaim/Reject</em> (institutional reference line), {" "}
-        <em>Higher Low</em> (afternoon pullback holding above the morning low).
+        <em>Higher Low</em> (pullback holding above the day low). Dashed
+        badges are setups still forming, with the levels to watch: an intact
+        box or price back at VWAP, before any trigger.
         Alerts for new setups go out through your configured channels during
         market hours.
       </div>

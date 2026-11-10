@@ -13,6 +13,15 @@ export type SetupType =
   | "vwap_rejection"
   | "higher_low";
 
+export interface IntradayWatch {
+  symbol: string;
+  watch_type: "box_forming" | "vwap_tag" | string;
+  detail: string;
+  upper: number | null;
+  lower: number | null;
+  timestamp: string;
+}
+
 export interface IntradayResult {
   symbol: string;
   price: number;
@@ -29,6 +38,7 @@ export interface IntradayResult {
   earnings_soon: boolean;
   signals: Signal[];
   setup_types: SetupType[];
+  watches: IntradayWatch[];
 }
 
 export interface Signal {

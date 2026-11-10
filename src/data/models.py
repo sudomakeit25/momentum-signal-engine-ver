@@ -65,6 +65,18 @@ class ScanResult(BaseModel):
     setup_types: list[SetupType]
 
 
+class IntradayWatch(BaseModel):
+    """A setup that is forming but has not triggered: levels to watch, no
+    entry yet. Lets you catch the first bars of a move instead of the
+    confirmation after it."""
+    symbol: str
+    watch_type: str            # "box_forming" | "vwap_tag"
+    detail: str
+    upper: float | None = None  # box high, or VWAP for a tag
+    lower: float | None = None  # box low, or VWAP for a tag
+    timestamp: datetime
+
+
 class IntradayResult(BaseModel):
     """One row of the intraday movers screener (5-min bar based)."""
     symbol: str
@@ -82,6 +94,7 @@ class IntradayResult(BaseModel):
     earnings_soon: bool = False  # reports today/tomorrow (FMP calendar)
     signals: list[Signal] = []
     setup_types: list[SetupType] = []
+    watches: list[IntradayWatch] = []
 
 
 class PositionSize(BaseModel):

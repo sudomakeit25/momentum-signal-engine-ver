@@ -234,6 +234,130 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
     return results
 
 
+def _format_watch_body(watches: list) -> str:
+    """Short SMS / push body for forming-setup watches. Carrier gateways cap
+    at 160 chars, so lines are added only while they fit."""
+    lines = ["MSE Watch" if len(watches) == 1 else f"MSE Watch: {len(watches)}"]
+    for w in watches:
+        if w.watch_type == "box_forming":
+            line = f"{w.symbol} box {w.lower:.2f}-{w.upper:.2f}, watch break"
+        elif w.watch_type == "vwap_tag":
+            line = f"{w.symbol} at VWAP {w.upper:.2f}, watch hold/reject"
+        else:
+            line = f"{w.symbol} {w.watch_type}"
+        if len("\n".join(lines + [line])) > 155:
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _send_text_sms(config, body: str) -> bool:
+    """Send a pre-formatted SMS body through the configured method."""
+    from config.settings import settings as _settings
+
+    if config.sms_method == "email_gateway" and config.sms_carrier:
+        digits = "".join(c for c in config.sms_to if c.isdigit())
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        gateway = CARRIER_GATEWAYS.get(config.sms_carrier)
+        if len(digits) != 10 or not gateway:
+            return False
+        if not _settings.smtp_email or not _settings.smtp_password:
+            return False
+        msg = MIMEText(body)
+        msg["From"] = _settings.smtp_email
+        msg["To"] = f"{digits}@{gateway}"
+        msg["Subject"] = ""
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(_settings.smtp_email, _settings.smtp_password)
+            server.send_message(msg)
+        return True
+    if config.sms_method == "twilio":
+        if not (
+            _settings.twilio_account_sid
+            and _settings.twilio_auth_token
+            and _settings.twilio_from_number
+        ):
+            return False
+        from twilio.rest import Client
+        client = Client(_settings.twilio_account_sid, _settings.twilio_auth_token)
+        client.messages.create(
+            body=body, from_=_settings.twilio_from_number, to=config.sms_to
+        )
+        return True
+    return False
+
+
+def dispatch_intraday_watches(watches: list) -> dict:
+    """Route forming-setup watches (box forming, VWAP tag) to SMS + push.
+
+    Same gating as the other intraday alerts: auto-alerts must be enabled,
+    SMS needs consent, and the 30-minute body fingerprint guards against
+    repeats. Callers dedupe per (symbol, watch_type, trading day).
+    """
+    results = {"sms": False, "push": False}
+    if not watches:
+        return results
+
+    config = load_config()
+    if not config.auto_alerts_enabled:
+        logger.info("Intraday auto-alerts disabled, skipping watch dispatch")
+        return results
+
+    body = _format_watch_body(watches)
+
+    if config.sms_to and config.sms_consent:
+        fp = _fingerprint_of_body(f"watch_sms:{body}")
+        recent = _recent_sms_fingerprints()
+        if fp in recent:
+            logger.info("Watch SMS suppressed (duplicate body sent %s)", recent[fp])
+        else:
+            try:
+                if _send_text_sms(config, body):
+                    _record_sms_fingerprint(fp)
+                    results["sms"] = True
+                    logger.info("Watch SMS sent (%d chars)", len(body))
+            except Exception as e:
+                logger.warning("Watch SMS dispatch failed: %s", e)
+
+    try:
+        from src.data.redis_store import get_push_tokens
+        tokens = list(get_push_tokens().keys())
+        if tokens:
+            fp = _fingerprint_of_body(f"watch_push:{body}")
+            if fp in _recent_sms_fingerprints():
+                logger.info("Watch push suppressed (duplicate body)")
+            else:
+                messages = [
+                    {
+                        "to": t,
+                        "sound": "default",
+                        "title": "MSE Setup Forming",
+                        "body": body,
+                        "data": {
+                            "type": "intraday_watch",
+                            "url": f"mse://instrument/{watches[0].symbol}",
+                        },
+                    }
+                    for t in tokens
+                ]
+                resp = http_requests.post(
+                    _EXPO_PUSH_URL,
+                    json=messages,
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    timeout=10,
+                )
+                if 200 <= resp.status_code < 300:
+                    _record_sms_fingerprint(fp)
+                    results["push"] = True
+                else:
+                    logger.warning("Watch push failed: HTTP %d", resp.status_code)
+    except Exception as e:
+        logger.debug("Watch push dispatch failed: %s", e)
+
+    return results
+
+
 def send_expo_push(tokens: list[str], signals: list) -> bool:
     """Send a push notification to each Expo push token via the Expo push API.
 

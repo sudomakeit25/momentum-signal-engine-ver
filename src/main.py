@@ -382,7 +382,11 @@ def _intraday_scan_loop():
     )
     from src.scanner.intraday_patterns import scan_intraday_patterns
     from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
-    from src.notifications.dispatcher import dispatch_alerts, dispatch_intraday_patterns
+    from src.notifications.dispatcher import (
+        dispatch_alerts,
+        dispatch_intraday_patterns,
+        dispatch_intraday_watches,
+    )
     from datetime import datetime
 
     seen_keys, seen_date = load_intraday_seen()
@@ -474,6 +478,27 @@ def _intraday_scan_loop():
                 seen_keys.update(
                     f"M:{s.symbol}:{s.setup_type.value}:{s.action.value}"
                     for s in mover_signals
+                )
+
+                # Forming setups (box intact, VWAP tag): alert once per
+                # symbol+type per day, before the trigger, with levels.
+                mover_watches = [w for r in movers for w in r.watches]
+                new_watches = [
+                    w for w in mover_watches
+                    if f"W:{w.symbol}:{w.watch_type}" not in seen_keys
+                ]
+                if new_watches:
+                    logger.info("Dispatching %d new setup watches", len(new_watches))
+                    try:
+                        result = dispatch_intraday_watches(new_watches)
+                        logger.info(
+                            "Watch dispatch result: sms=%s push=%s",
+                            result.get("sms"), result.get("push"),
+                        )
+                    except Exception as e:
+                        logger.warning("Watch dispatch failed: %s", e)
+                seen_keys.update(
+                    f"W:{w.symbol}:{w.watch_type}" for w in mover_watches
                 )
                 save_intraday_seen(seen_keys, seen_date)
             except Exception as e:

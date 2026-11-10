@@ -21,8 +21,10 @@ import pandas as pd
 
 from config.settings import settings
 from src.data import client
-from src.data.models import IntradayResult, SetupType, Signal, SignalAction
-from src.signals.indicators import atr, vwap
+from src.data.models import (
+    IntradayResult, IntradayWatch, SetupType, Signal, SignalAction,
+)
+from src.signals.indicators import atr, macd, vwap
 
 logger = logging.getLogger("mse.intraday_movers")
 
@@ -140,9 +142,7 @@ def detect_range_breakout(
     height_pct = height / price * 100
     if height <= 0:
         return None
-    # Tight: box is at most ~1/3 of the daily range, floored at 0.3% for
-    # low-ATR names so SPY-types are not unreachable.
-    if height_pct > max(0.3, 0.35 * atr_pct):
+    if not _box_is_tight(height_pct, atr_pct):
         return None
 
     box_avg_vol = float(box["volume"].mean())
@@ -272,53 +272,184 @@ def detect_vwap_setup(
 def detect_higher_low(
     sdf: pd.DataFrame, symbol: str, min_rr: float | None = None
 ) -> Signal | None:
-    """Afternoon pullback holds above the morning low, price confirming back
-    up — entry on confirmation, stop under the higher low, target the day high.
+    """Day low -> bounce -> pullback that holds above the day low -> price
+    confirming back up. Works at any time of session (not only afternoon).
+
+    Entry on confirmation (close back above the pivot bar's high), stop under
+    the higher low. Target is the day high, or the bounce peak on a day whose
+    high came before its low (the day high is not this leg's structure then).
+    A rising MACD histogram raises confidence.
     """
     min_rr = min_rr if min_rr is not None else settings.intraday_min_rr
     if sdf is None or len(sdf) < 12:
         return None
 
-    times = sdf.index.time
-    morning = sdf[times < MIDDAY]
-    afternoon = sdf[times >= MIDDAY]
-    if len(morning) < 6 or len(afternoon) < 4:
+    lows = sdf["low"].to_numpy(dtype=float)
+    highs = sdf["high"].to_numpy(dtype=float)
+    body = len(sdf) - 1  # everything before the latest (confirmation) bar
+
+    day_low_i = int(lows[:body].argmin())
+    bounce = highs[day_low_i + 1:body]
+    if len(bounce) < 3:
+        return None  # day low too recent: still falling, nothing to hold yet
+    # Last occurrence of the bounce high, so the pullback is searched after it
+    peak_i = day_low_i + 1 + (len(bounce) - 1 - int(bounce[::-1].argmax()))
+    after_peak = lows[peak_i + 1:body]
+    if len(after_peak) < 1:
         return None
+    pivot_i = peak_i + 1 + int(after_peak.argmin())
 
-    morning_low = float(morning["low"].min())
-    # Pullback low excludes the latest (confirmation) bar
-    pullback = afternoon.iloc[:-1]
-    pullback_low = float(pullback["low"].min())
-    pivot_pos = pullback["low"].values.argmin()
-    pivot_bar = pullback.iloc[pivot_pos]
+    day_low = float(lows[day_low_i])
+    pullback_low = float(lows[pivot_i])
+    peak_high = float(highs[peak_i])
+    last_close = float(sdf["close"].iloc[-1])
 
-    last = sdf.iloc[-1]
-    last_close = float(last["close"])
-    day_high = float(sdf["high"].max())
-
-    # Higher low by a real margin (0.15%), not a retest of the morning low
-    if pullback_low <= morning_low * 1.0015:
+    # Higher low by a real margin (0.15%), not a retest of the day low
+    if pullback_low <= day_low * 1.0015:
+        return None
+    # A real bounce came first, then a pullback into the pivot
+    if peak_high < pullback_low * 1.003:
+        return None
+    # The confirmation bar must not undercut the higher low it confirms
+    if float(lows[-1]) < pullback_low:
         return None
     # Confirmation: latest close back above the pivot bar's high
-    if last_close <= float(pivot_bar["high"]):
+    if last_close <= float(highs[pivot_i]):
         return None
+
+    day_high = float(highs.max())
+    day_high_i = int(highs.argmax())
+    target = peak_high if day_high_i < day_low_i else day_high
     # Need room to the target
-    if last_close >= day_high:
+    if last_close >= target:
         return None
+
+    confidence = 0.62
+    macd_note = ""
+    try:
+        hist = macd(sdf["close"])[2]
+        if pd.notna(hist.iloc[-1]) and pd.notna(hist.iloc[-3]) and (
+            float(hist.iloc[-1]) > float(hist.iloc[-3])
+        ):
+            confidence = 0.7
+            macd_note = ", MACD histogram rising"
+    except Exception:
+        pass
 
     ts = sdf.index[-1].to_pydatetime()
     return _make_signal(
         symbol, SignalAction.BUY, SetupType.HIGHER_LOW,
-        f"Afternoon higher low {pullback_low:.2f} held above morning low "
-        f"{morning_low:.2f}; targeting day high {day_high:.2f}",
-        entry=last_close, stop=pullback_low, target=day_high,
-        confidence=0.65, timestamp=ts, min_rr=min_rr,
+        f"Higher low {pullback_low:.2f} held above day low {day_low:.2f}; "
+        f"targeting {target:.2f}{macd_note}",
+        entry=last_close, stop=pullback_low, target=target,
+        confidence=confidence, timestamp=ts, min_rr=min_rr,
     )
 
 
+def _box_is_tight(height_pct: float, atr_pct: float) -> bool:
+    """Box is at most ~1/3 of the daily range, floored at 0.3% so low-ATR
+    names are not unreachable."""
+    return height_pct <= max(0.3, 0.35 * atr_pct)
+
+
+def detect_box_forming(
+    sdf: pd.DataFrame, symbol: str, atr_pct: float, box_bars: int | None = None
+) -> IntradayWatch | None:
+    """Tight box still intact after a real move: a range-break candidate.
+
+    Fires before the break, with the two levels to watch, so the entry can
+    be taken in the first bars instead of after the move. The box includes
+    the current bar (price is still inside it by construction).
+    """
+    box_bars = box_bars or settings.intraday_box_bars
+    # An hour of session must precede the box, otherwise the "box" is just
+    # the opening range and every mover alerts at once mid-morning.
+    if sdf is None or len(sdf) < box_bars + settings.intraday_watch_min_prior_bars:
+        return None
+
+    box = sdf.iloc[-box_bars:]
+    price = float(box["close"].iloc[-1])
+    if price <= 0:
+        return None
+    box_high = float(box["high"].max())
+    box_low = float(box["low"].min())
+    height_pct = (box_high - box_low) / price * 100
+    # Stricter than the confirmed-breakout rule: this alert has no volume
+    # trigger behind it, so the box itself has to be genuinely tight.
+    max_height = min(
+        settings.intraday_watch_box_max_pct,
+        max(0.3, settings.intraday_watch_box_atr_frac * atr_pct),
+    )
+    if height_pct <= 0 or height_pct > max_height:
+        return None
+
+    day_range_pct = (float(sdf["high"].max()) - float(sdf["low"].min())) / price * 100
+    if day_range_pct < settings.intraday_box_min_day_range_mult * height_pct:
+        return None  # no real move before the box: just a quiet stock
+
+    return IntradayWatch(
+        symbol=symbol,
+        watch_type="box_forming",
+        detail=(
+            f"{box_bars * 5}min box {box_low:.2f}-{box_high:.2f} "
+            f"({height_pct:.2f}% tall, day range {day_range_pct:.2f}%). "
+            f"Watch break of {box_high:.2f} / {box_low:.2f}"
+        ),
+        upper=round(box_high, 2),
+        lower=round(box_low, 2),
+        timestamp=sdf.index[-1].to_pydatetime(),
+    )
+
+
+def detect_vwap_tag(sdf: pd.DataFrame, symbol: str) -> IntradayWatch | None:
+    """Price back at session VWAP after trending away from it: the decision
+    point before a hold (reclaim) or a reject."""
+    if sdf is None or len(sdf) < 20:
+        return None
+
+    vw = vwap(sdf)
+    closes = sdf["close"]
+    price = float(closes.iloc[-1])
+    vw_last = float(vw.iloc[-1])
+    if price <= 0 or not vw_last > 0:
+        return None
+
+    dist_now = abs(price - vw_last) / price * 100
+    dist_hist = (closes - vw).abs() / closes * 100
+    max_away = float(dist_hist.iloc[:-5].max())
+    if dist_now > settings.intraday_vwap_near_pct:
+        return None
+    if not max_away >= settings.intraday_vwap_far_pct:
+        return None
+
+    side = "above" if price >= vw_last else "below"
+    return IntradayWatch(
+        symbol=symbol,
+        watch_type="vwap_tag",
+        detail=(
+            f"Tagging VWAP {vw_last:.2f} from {side} "
+            f"(was {max_away:.2f}% away). Watch hold / reject"
+        ),
+        upper=round(vw_last, 2),
+        lower=round(vw_last, 2),
+        timestamp=sdf.index[-1].to_pydatetime(),
+    )
+
+
+# High-beta liquid names that routinely have 4-10% daily ranges. Added to
+# the fallback universe (used when the caller passes no symbols), which
+# otherwise leans large-cap.
+HIGH_BETA_EXTRAS = [
+    "SNDK", "WDC", "TSM", "SMCI", "ASTS", "RKLB", "MSTR", "CLSK", "HOOD", "ARM",
+]
+
+
 def _intraday_universe(symbols: list[str] | None) -> list[str]:
-    from src.scanner.screener import get_default_universe
-    base = symbols or get_default_universe()
+    if symbols:
+        base = list(symbols)
+    else:
+        from src.scanner.screener import get_default_universe
+        base = list(dict.fromkeys(get_default_universe() + HIGH_BETA_EXTRAS))
     # Crypto has no session / VWAP semantics here
     return [s for s in base if "/" not in s]
 
@@ -400,10 +531,22 @@ def scan_intraday(
                 if s is not None
             ]
 
+            # Forming setups: only when the matching trigger has not fired
+            fired = {s.setup_type for s in signals}
+            watches: list[IntradayWatch] = []
+            if SetupType.RANGE_BREAKOUT not in fired:
+                w = detect_box_forming(sdf, symbol, atr_pct)
+                if w is not None:
+                    watches.append(w)
+            if not fired & {SetupType.VWAP_RECLAIM, SetupType.VWAP_REJECTION}:
+                w = detect_vwap_tag(sdf, symbol)
+                if w is not None:
+                    watches.append(w)
+
             score = min(
                 100.0,
                 abs(change_pct) * 6 + min(rvol, 5) * 8 + min(atr_pct, 10) * 3
-                + 20 * len(signals),
+                + 20 * len(signals) + 8 * len(watches),
             )
 
             return IntradayResult(
@@ -420,6 +563,7 @@ def scan_intraday(
                 score=round(score, 1),
                 signals=signals,
                 setup_types=[s.setup_type for s in signals],
+                watches=watches,
             )
         except Exception:
             return None

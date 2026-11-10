@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     intraday_min_rr: float = 1.5              # checklist: risk/reward at least 1:1.5
     intraday_box_bars: int = 8                # 8 x 5min = 40 min consolidation box
     intraday_top_n: int = 25
+    # Forming-setup watches (alert before the trigger, with levels)
+    intraday_box_min_day_range_mult: float = 2.2  # box must follow a real move
+    intraday_watch_box_atr_frac: float = 0.12     # watch box height <= this share of ATR%
+    intraday_watch_box_max_pct: float = 1.0       # and never taller than this % of price
+    intraday_watch_min_prior_bars: int = 12       # 1h of session before the box (skip the opening range)
+    intraday_vwap_near_pct: float = 0.15          # "at VWAP" threshold
+    intraday_vwap_far_pct: float = 0.60           # must have been this far away earlier
 
     # Twilio SMS
     twilio_account_sid: str = ""
