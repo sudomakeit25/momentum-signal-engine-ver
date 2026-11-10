@@ -74,6 +74,23 @@ def scanner_catalyst_watch(
     )
 
 
+@router.get("/scanner/spike-watch")
+def scanner_spike_watch():
+    """Sudden spikes and reversals: volume ignition, failed breaks of
+    yesterday's range, exhaustion and capitulation days, stretched names,
+    and peer groups where a leader has moved and others have not."""
+    from src.scanner.spike_reversal import scan_spikes_reversals
+    return scan_spikes_reversals()
+
+
+@router.get("/scorecard")
+def scorecard_report(days: int = Query(default=30, ge=1, le=90)):
+    """How each kind of alert actually did: share that went the alert's way
+    and average move at 15 minutes, 1 hour, the close, +1 and +5 sessions."""
+    from src.scanner import scorecard
+    return scorecard.report(days=days)
+
+
 @router.get("/intraday-screener", response_model=list[IntradayResult])
 def intraday_screener(
     top: int = Query(default=25, ge=1, le=100),

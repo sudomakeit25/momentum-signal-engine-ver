@@ -118,9 +118,19 @@ export default function IntradayMoversPage() {
                 <TableRow key={r.symbol}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-1.5">
-                      <Link href={`/chart/${r.symbol}`} className="hover:underline">
-                        {r.symbol}
-                      </Link>
+                      <div className="min-w-0">
+                        <Link href={`/chart/${r.symbol}`} className="hover:underline">
+                          {r.symbol}
+                        </Link>
+                        {r.headline && (
+                          <div
+                            className="max-w-[240px] truncate text-[10px] font-normal text-zinc-500"
+                            title={r.headline}
+                          >
+                            {r.headline}
+                          </div>
+                        )}
+                      </div>
                       {r.earnings_soon && (
                         <span
                           title="Earnings within a day — be flat before the close"

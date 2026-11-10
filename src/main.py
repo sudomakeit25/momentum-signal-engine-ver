@@ -360,6 +360,15 @@ def _refresh_loop():
                 )
             except Exception as e:
                 logger.warning("Catalyst watch scan failed: %s", e)
+
+            # Fill in what happened after each logged alert (throttled inside).
+            try:
+                from src.scanner import scorecard
+                updated = scorecard.refresh_outcomes()
+                if updated:
+                    logger.info("Scorecard: %d outcomes updated", updated)
+            except Exception as e:
+                logger.warning("Scorecard refresh failed: %s", e)
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 
@@ -395,6 +404,7 @@ def _intraday_scan_loop():
     )
     from src.scanner.intraday_patterns import scan_intraday_patterns
     from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
+    from src.scanner import scorecard, spike_reversal
     from src.trading import auto_trader
     from src.notifications.dispatcher import (
         dispatch_alerts,
@@ -441,6 +451,11 @@ def _intraday_scan_loop():
             # Reversals card always has data, even if every pattern was
             # already seen and not re-dispatched.
             save_intraday_latest([p.to_dict() for p in patterns])
+            _score(scorecard, [
+                {"symbol": p.symbol, "kind": p.pattern_type,
+                 "direction": _pattern_direction(p.pattern_type), "price": p.trigger_price}
+                for p in patterns
+            ])
 
             new_patterns = [
                 p for p in patterns
@@ -480,6 +495,7 @@ def _intraday_scan_loop():
                     "Intraday movers: %d rows, %d setups (%d new)",
                     len(movers), len(mover_signals), len(new_setups),
                 )
+                _score(scorecard, [scorecard.from_signal(s) for s in mover_signals])
                 if new_setups:
                     # Paper auto-trader first (the quote is freshest now).
                     # No-op unless AUTO_TRADE_ENABLED is set and not paused.
@@ -531,10 +547,42 @@ def _intraday_scan_loop():
                 save_intraday_seen(seen_keys, seen_date)
             except Exception as e:
                 logger.warning("Intraday movers screen failed: %s", e)
+
+            # --- Spikes and reversals: measured, not alerted ---
+            # These detectors are new and unproven. They are shown on the
+            # Spike Watch page and logged to the scorecard; no SMS until
+            # the scorecard shows which of them are worth one.
+            try:
+                watch_universe = list(dict.fromkeys(
+                    symbols + spike_reversal.default_universe()
+                ))
+                # Usual-volume profile: 30 days of 5-minute bars, built once a
+                # day, so it is limited to the active intraday universe.
+                spike_reversal.ensure_volume_profile(symbols)
+                spikes = spike_reversal.scan_spikes_reversals(watch_universe)
+                _score(scorecard, spikes["events"])
+                logger.info("Spike watch: %d events", len(spikes["events"]))
+            except Exception as e:
+                logger.warning("Spike watch failed: %s", e)
         except Exception as e:
             logger.warning("Intraday loop iteration failed: %s", e)
 
         _stop_event.wait(_INTRADAY_INTERVAL)
+
+
+def _pattern_direction(pattern_type: str) -> str:
+    """Which way an intraday pattern points, for the scorecard."""
+    return "down" if pattern_type in ("inverted_v", "breakdown") else "up"
+
+
+def _score(scorecard, alerts: list[dict]) -> None:
+    """Log alerts to the scorecard. Measurement must never break a scan."""
+    try:
+        added = scorecard.log_alerts(alerts)
+        if added:
+            logger.info("Scorecard: %d new alerts logged", added)
+    except Exception as e:
+        logger.warning("Scorecard logging failed: %s", e)
 
 
 def _auto_trade_guard_loop():

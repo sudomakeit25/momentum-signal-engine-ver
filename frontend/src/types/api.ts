@@ -39,6 +39,7 @@ export interface IntradayResult {
   signals: Signal[];
   setup_types: SetupType[];
   watches: IntradayWatch[];
+  headline: string;
 }
 
 export interface Signal {

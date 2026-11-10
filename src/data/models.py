@@ -96,6 +96,7 @@ class IntradayResult(BaseModel):
     signals: list[Signal] = []
     setup_types: list[SetupType] = []
     watches: list[IntradayWatch] = []
+    headline: str = ""       # most specific recent news headline, if any
 
 
 class PositionSize(BaseModel):

@@ -621,4 +621,14 @@ def scan_intraday(
             r.earnings_soon = r.symbol in reporting
             r.earnings_known = r.symbol in known
 
+        # Checklist item 2: is there a reason it is moving?
+        try:
+            from src.data.news import latest_headlines
+            news = latest_headlines([r.symbol for r in results])
+            for r in results:
+                top = (news.get(r.symbol) or [None])[0]
+                r.headline = top["headline"] if top else ""
+        except Exception as e:
+            logger.debug("Headlines skipped: %s", e)
+
     return results

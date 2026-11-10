@@ -271,6 +271,7 @@ class TestScanIntraday:
         monkeypatch.setattr(mod.client, "get_multi_bars", fake_multi_bars)
         monkeypatch.setattr(mod.client, "get_intraday_multi_bars", fake_intraday_bars)
         monkeypatch.setattr(mod, "_earnings_lookup", lambda symbols: (set(), set(symbols)))
+        monkeypatch.setattr("src.data.news.latest_headlines", lambda symbols, **k: {})
         results = mod.scan_intraday(
             symbols=["MOVR", "QUIET", "BTC/USD"],
             check_spread=False,
@@ -462,6 +463,9 @@ class TestScanWatches:
         monkeypatch.setattr(
             mod, "_earnings_lookup",
             lambda symbols: (self.reporting, set(symbols) if self.known else set()))
+        monkeypatch.setattr("src.data.news.latest_headlines",
+                            lambda symbols, **k: {s: [{"headline": f"{s} wins contract"}]
+                                                  for s in symbols if s == "MOVR"})
         return mod.scan_intraday(symbols=["MOVR"], check_spread=False, now=NOW)
 
     def test_intact_box_surfaces_as_watch(self, monkeypatch):
@@ -582,3 +586,25 @@ def test_make_signal_rejects_non_finite_levels():
                                 (100.0, 99.0, float("inf"))]:
         assert _make_signal("X", SignalAction.BUY, SetupType.HIGHER_LOW, "r", entry, stop,
                             target, 0.6, NOW, 1.5) is None
+
+
+def test_scan_attaches_the_top_headline(monkeypatch):
+    helper = TestScanWatches()
+    five_min = _forming_box()
+    five_min["volume"] = 2_000_000
+    row = helper._run(monkeypatch, five_min)[0]
+    assert row.headline == "MOVR wins contract"
+
+
+def test_scan_survives_a_news_failure(monkeypatch):
+    from src.scanner import intraday_movers as mod
+    helper = TestScanWatches()
+    five_min = _forming_box()
+    five_min["volume"] = 2_000_000
+    helper._run(monkeypatch, five_min)            # installs the data fakes
+
+    def boom(symbols, **k):
+        raise RuntimeError("news down")
+    monkeypatch.setattr("src.data.news.latest_headlines", boom)
+    results = mod.scan_intraday(symbols=["MOVR"], check_spread=False, now=NOW)
+    assert len(results) == 1 and results[0].headline == ""
