@@ -1012,7 +1012,12 @@ class TestRoutes:
         from config.settings import settings
         from src.api.routes import router
         paths = {r.path for r in router.routes if "/trading/auto" in r.path}
-        assert paths == {"/trading/auto/status", "/trading/auto/pause", "/trading/auto/resume"}
+        assert paths == {"/trading/auto/status", "/trading/auto/pause", "/trading/auto/resume",
+                         "/trading/auto/history"}
+        # The read-only routes must stay read-only.
+        for r in router.routes:
+            if r.path in ("/trading/auto/status", "/trading/auto/history"):
+                assert r.methods == {"GET"}, r.path
         c = self._client()
         c.post("/trading/auto/pause")
         assert settings.auto_trade_enabled is False

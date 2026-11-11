@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,9 @@ export function AutoTraderPanel() {
             halts at -${c.daily_loss_limit_usd} · no entries after {c.last_entry} ET ·
             flat by {c.flatten_at} ET
           </span>
+          <Link href="/auto-trader" className="text-cyan-400 hover:underline">
+            All trades and results
+          </Link>
         </div>
         {data.enabled && !data.paused && (
           <Button

@@ -1761,6 +1761,15 @@ def trading_auto_status():
     return auto_trader.status()
 
 
+@router.get("/trading/auto/history")
+def trading_auto_history(days: int = Query(default=30, ge=1, le=90)):
+    """Every paper trade the auto-trader made in the last `days` days, rebuilt
+    from the broker's order history: entry, exit, how it ended, profit or
+    loss, and totals by day and by setup. Orders placed by hand are ignored."""
+    from src.trading import trade_history
+    return trade_history.history(days)
+
+
 @router.post("/trading/auto/pause")
 def trading_auto_pause():
     """Kill switch: stop new entries. Open to anyone, because it can only

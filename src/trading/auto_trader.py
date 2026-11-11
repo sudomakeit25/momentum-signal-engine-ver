@@ -189,6 +189,15 @@ class Broker(Protocol):
     def cancel_order(self, order_id: str) -> None: ...
 
 
+def _price(v) -> float | None:
+    """Alpaca sends prices as strings or None."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 and f == f and f != float("inf") else None
+
+
 def _order_dict(o) -> dict:
     created = getattr(o, "created_at", None) or getattr(o, "submitted_at", None)
     date = created.astimezone(ET).date().isoformat() if created else ""
@@ -199,7 +208,13 @@ def _order_dict(o) -> dict:
               or created)
     status = getattr(o.status, "value", o.status)
     side = getattr(o.side, "value", o.side)
+    kind = getattr(o, "order_type", None) or getattr(o, "type", None)
     return {
+        # Prices are for the trade history only; the ownership ledger does not use them.
+        "filled_avg_price": _price(getattr(o, "filled_avg_price", None)),
+        "limit_price": _price(getattr(o, "limit_price", None)),
+        "stop_price": _price(getattr(o, "stop_price", None)),
+        "order_type": str(getattr(kind, "value", kind) or ""),
         "order_id": str(o.id),
         "client_order_id": o.client_order_id or "",
         "symbol": o.symbol,
