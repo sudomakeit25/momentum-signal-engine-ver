@@ -42,8 +42,13 @@ def si(dtc, chg=0.0):
 @pytest.fixture
 def world(monkeypatch):
     """Fake sources. Fill w['cal'][iso date], w['si'], w['bars'] per test."""
-    w = {"cal": {}, "si": {}, "bars": {}, "assets": None, "bar_calls": [], "fail": set()}
+    w = {"cal": {}, "si": {}, "bars": {}, "assets": None, "bar_calls": [], "fail": set(),
+         "history": {}, "history_calls": []}
     cw._cache.clear()
+
+    def earnings_history(symbol):
+        w["history_calls"].append(symbol)
+        return w["history"].get(symbol)          # None = unavailable
 
     def nasdaq_day(day):
         if "nasdaq" in w["fail"]:
@@ -68,6 +73,7 @@ def world(monkeypatch):
 
     import src.data.finra_client as finra
     monkeypatch.setattr(cw.ec, "nasdaq_day", nasdaq_day)
+    monkeypatch.setattr(cw.ec, "earnings_history", earnings_history)
     monkeypatch.setattr(cw.client, "get_multi_bars", multi_bars)
     monkeypatch.setattr(cw.client, "get_tradeable_assets", assets)
     monkeypatch.setattr(finra, "get_short_interest", short_interest)
@@ -170,7 +176,7 @@ class TestUpcoming:
         world["si"] = {"COIL": si(8.0), "CALM": si(1.0)}
         world["bars"] = {"COIL": bars(FLAT), "CALM": bars(FLAT)}
         run()
-        assert world["bar_calls"][0][0] == ["COIL"]
+        assert world["bar_calls"][0][0] == ["COIL", "SPY"]      # SPY is the market yardstick
 
     def test_ranked_by_score(self, world):
         world["cal"]["2026-11-10"] = [cal("LOW"), cal("HIGH")]
@@ -312,3 +318,151 @@ class TestFailures:
     def test_empty_short_interest_table_counts_as_unavailable(self, world):
         r = run()                                  # FINRA returned nothing at all
         assert r["data_ok"] is False and any("short interest" in n for n in r["notes"])
+
+
+# ------------------------------------------------- 52-week range and scoring
+
+class TestYearRange:
+    def test_three_month_high_but_near_the_bottom_of_its_year(self):
+        # AECOM-like: 130 a year ago, sold off to 58, now 70 at its 3-month high
+        closes = [130.0] * 120 + [100.0] * 60 + [62.0] * 60 + [58.0] * 5 + [64.0, 66.0, 68.0, 70.0]
+        s = cw.price_stats(bars(closes))
+        assert s["range_pos"] > 90 and s["range_pos_52w"] < 20
+        assert s["low_52w"] < 58.0 and s["high_52w"] > 130.0
+
+    def test_short_history_has_no_year_range(self):
+        s = cw.price_stats(bars([20.0] * 70))
+        assert s["range_pos_52w"] is None and s["low_52w"] is None
+
+    def test_beaten_down_on_the_year_raises_the_score(self):
+        base = cw.coiled_score(5, 0, 100, 3)                      # 3-month high, no year view
+        assert cw.coiled_score(5, 0, 100, 3, range_pos_52w=17) > base
+        assert cw.coiled_score(5, 0, 100, 3, range_pos_52w=100) == base
+        assert cw.coiled_score(10, 20, 0, 0, range_pos_52w=0) == 100.0
+        assert cw.coiled_score(5, 0, 100, 3, range_pos_52w=250) == base     # clamped
+
+
+# ------------------------------------------------------ past earnings reactions
+
+def acm_bars():
+    """Daily closes around four after-close reports, AECOM's real pattern."""
+    days = {
+        date(2025, 11, 17): 126.6, date(2025, 11, 18): 125.1, date(2025, 11, 19): 111.2,
+        date(2026, 2, 6): 98.0, date(2026, 2, 9): 99.7, date(2026, 2, 10): 100.8,
+        date(2026, 2, 11): 97.9, date(2026, 2, 12): 85.8,
+        date(2026, 5, 8): 79.8, date(2026, 5, 11): 78.7, date(2026, 5, 12): 69.3,
+        date(2026, 8, 7): 75.5, date(2026, 8, 10): 73.0, date(2026, 8, 11): 66.8,
+        date(2026, 8, 12): 60.8,
+    }
+    idx = pd.DatetimeIndex([pd.Timestamp(d, tz="UTC") + pd.Timedelta(hours=5) for d in days])
+    c = list(days.values())
+    return pd.DataFrame({"open": c, "high": c, "low": c, "close": c, "volume": 1}, index=idx)
+
+
+ACM_HISTORY = [{"date": "2026-08-10", "surprise_pct": -133.56},
+               {"date": "2026-05-11", "surprise_pct": 0.63},
+               {"date": "2026-02-09", "surprise_pct": -8.51},
+               {"date": "2025-11-18", "surprise_pct": 1.49}]
+
+
+class TestPastReactions:
+    def test_after_close_reporter_uses_the_next_session(self):
+        r = cw.past_reactions(acm_bars(), ACM_HISTORY, "amc")
+        assert [(x["date"], x["reaction_date"], x["move_pct"]) for x in r] == [
+            ("2026-08-10", "2026-08-11", -8.49), ("2026-05-11", "2026-05-12", -11.94),
+            ("2026-02-09", "2026-02-10", 1.1), ("2025-11-18", "2025-11-19", -11.11)]
+        assert r[0]["surprise_pct"] == -133.56
+
+    def test_a_later_selloff_is_not_counted_as_the_reaction(self):
+        feb = cw.past_reactions(acm_bars(), ACM_HISTORY, "amc")[2]
+        assert feb["move_pct"] == 1.1          # the -12% on Feb 12 came three days later
+
+    def test_before_open_reporter_uses_the_same_session(self):
+        r = cw.past_reactions(acm_bars(), ACM_HISTORY[:1], "bmo")
+        assert (r[0]["reaction_date"], r[0]["move_pct"]) == ("2026-08-10", -3.31)
+
+    def test_unknown_timing_takes_the_larger_move(self):
+        r = cw.past_reactions(acm_bars(), ACM_HISTORY[:1], "")
+        assert (r[0]["reaction_date"], r[0]["move_pct"]) == ("2026-08-11", -8.49)
+
+    def test_unavailable_history_is_none_and_empty_history_is_empty(self):
+        assert cw.past_reactions(acm_bars(), None, "amc") is None
+        assert cw.past_reactions(acm_bars(), [], "amc") == []
+        assert cw.past_reactions(None, ACM_HISTORY, "amc") is None
+
+    def test_reports_outside_the_price_history_are_skipped(self):
+        hist = [{"date": "2030-01-01"}, {"date": "2019-01-01"}, {"date": "2026-05-11"}]
+        r = cw.past_reactions(acm_bars(), hist, "amc")
+        # 2030 is past the data; 2019 predates it and must not be pinned to the first bar
+        assert [x["date"] for x in r] == ["2026-05-11"]
+
+    def test_report_just_before_the_history_starts_is_skipped(self):
+        # first bar is 2025-11-17; a report a month earlier has no session of its own
+        assert cw.past_reactions(acm_bars(), [{"date": "2025-10-15"}], "amc") == []
+
+    def test_report_on_a_weekend_uses_the_next_session(self):
+        r = cw.past_reactions(acm_bars(), [{"date": "2026-05-09"}], "bmo")     # Saturday
+        assert r[0]["reaction_date"] == "2026-05-11"
+
+    def test_limit_and_malformed_rows_and_unsorted_bars(self):
+        hist = [{"date": "garbage"}, {}] + ACM_HISTORY
+        assert len(cw.past_reactions(acm_bars(), hist, "amc", limit=2)) == 2
+        assert cw.past_reactions(acm_bars().iloc[::-1], ACM_HISTORY, "amc")[0]["move_pct"] == -8.49
+
+
+class TestScanEnrichment:
+    def _setup(self, world, spy_last=100.0):
+        world["cal"]["2026-11-16"] = [cal("ACM", name="AECOM")]
+        world["si"] = {"ACM": si(4.37, 3.8)}
+        world["bars"]["SPY"] = bars([100.0] * 69 + [spy_last])
+
+    def test_move_explained_by_the_market_is_not_an_early_move(self, world):
+        self._setup(world, spy_last=102.4)                       # market +2.4%
+        world["bars"]["ACM"] = bars([66.74] * 69 + [70.21], [1_147_000] * 69 + [2_280_000])
+        row = run()["upcoming"][0]
+        assert row["last_day_pct"] == 5.2 and row["last_day_vs_market"] == 2.8
+        assert row["early_move"] is False
+
+    def test_move_well_beyond_the_market_is_an_early_move(self, world):
+        self._setup(world, spy_last=102.4)
+        world["bars"]["ACM"] = bars([66.74] * 69 + [72.5], [1_147_000] * 69 + [2_500_000])
+        assert run()["upcoming"][0]["early_move"] is True
+
+    def test_market_data_missing_falls_back_to_the_raw_move(self, world):
+        world["cal"]["2026-11-16"] = [cal("ACM")]
+        world["si"] = {"ACM": si(4.37)}
+        world["bars"]["ACM"] = bars([66.74] * 69 + [70.21], [1_147_000] * 69 + [2_280_000])
+        row = run()["upcoming"][0]
+        assert row["last_day_vs_market"] == row["last_day_pct"] and row["early_move"] is True
+
+    def test_past_reactions_and_typical_move_are_attached(self, world):
+        self._setup(world)
+        base = acm_bars()
+        tail = bars([70.0] * 40)                                  # recent sessions for the stats
+        world["bars"]["ACM"] = pd.concat([base, tail]).sort_index()
+        world["history"]["ACM"] = ACM_HISTORY
+        row = run()["upcoming"][0]
+        assert [r["move_pct"] for r in row["past_reactions"]] == [-8.49, -11.94, 1.1, -11.11]
+        assert row["typical_move_pct"] == 8.2
+
+    def test_history_unavailable_leaves_reactions_unknown(self, world):
+        self._setup(world)
+        world["bars"]["ACM"] = bars([70.0] * 70)
+        row = run()["upcoming"][0]
+        assert row["past_reactions"] is None and row["typical_move_pct"] is None
+
+    def test_history_lookups_are_capped(self, world, monkeypatch):
+        monkeypatch.setattr(cw, "_MAX_HISTORY", 2)
+        world["cal"]["2026-11-16"] = [cal(s) for s in ("AA", "BB", "CC", "DD")]
+        world["si"] = {s: si(5.0 + i) for i, s in enumerate(("AA", "BB", "CC", "DD"))}
+        for s in ("AA", "BB", "CC", "DD"):
+            world["bars"][s] = bars([70.0] * 70)
+        rows = run()["upcoming"]
+        assert len(rows) == 4 and sorted(world["history_calls"]) == ["CC", "DD"]   # top two by score
+
+    def test_spy_is_never_listed_as_a_candidate(self, world):
+        self._setup(world)
+        world["bars"]["ACM"] = bars([70.0] * 70)
+        world["cal"]["2026-11-16"].append(cal("SPY"))
+        world["si"]["SPY"] = si(9.0)
+        assert {r["symbol"] for r in run()["upcoming"]} == {"ACM", "SPY"}   # only if it truly reports

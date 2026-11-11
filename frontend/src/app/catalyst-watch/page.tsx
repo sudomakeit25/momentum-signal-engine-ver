@@ -72,7 +72,8 @@ function UpcomingTable({ rows }: { rows: UpcomingCatalyst[] }) {
           <TableHead className="text-right">Score</TableHead>
           <TableHead className="text-right">Days to cover</TableHead>
           <TableHead className="text-right">Short interest chg</TableHead>
-          <TableHead className="text-right">3-mo range</TableHead>
+          <TableHead className="text-right">Range position</TableHead>
+          <TableHead>Last reports</TableHead>
           <TableHead className="text-right">Price</TableHead>
           <TableHead className="text-right">5d</TableHead>
           <TableHead className="text-right">Mkt cap</TableHead>
@@ -86,7 +87,7 @@ function UpcomingTable({ rows }: { rows: UpcomingCatalyst[] }) {
                 <Sym symbol={r.symbol} name={r.name} />
                 {r.early_move && (
                   <span
-                    title={`Up ${r.last_day_pct.toFixed(1)}% on ${r.last_day_rvol}x volume in the last session, before the report`}
+                    title={`Up ${r.last_day_pct.toFixed(1)}% on ${r.last_day_rvol}x volume in the last session, ${(r.last_day_vs_market ?? r.last_day_pct).toFixed(1)} points more than the market`}
                     className="rounded border border-amber-500/30 bg-amber-500/20 px-1 text-[10px] text-amber-400"
                   >
                     EARLY MOVE
@@ -100,8 +101,42 @@ function UpcomingTable({ rows }: { rows: UpcomingCatalyst[] }) {
             <TableCell className={cn("text-right", r.si_change_pct > 0 ? "text-amber-400" : "text-zinc-500")}>
               {pct(r.si_change_pct)}
             </TableCell>
-            <TableCell className="text-right text-xs text-zinc-400" title={`$${r.low_3m} to $${r.high_3m}`}>
-              {r.range_pos.toFixed(0)}% from low
+            <TableCell className="text-right text-xs text-zinc-400">
+              <div title={`3 months: $${r.low_3m} to $${r.high_3m}`}>
+                {r.range_pos.toFixed(0)}% of 3-mo
+              </div>
+              {r.range_pos_52w != null && (
+                <div
+                  title={`52 weeks: $${r.low_52w} to $${r.high_52w}`}
+                  className={r.range_pos_52w <= 25 ? "text-amber-400" : undefined}
+                >
+                  {r.range_pos_52w.toFixed(0)}% of 1-yr
+                </div>
+              )}
+            </TableCell>
+            <TableCell>
+              {r.past_reactions == null ? (
+                <span className="text-xs text-zinc-600">–</span>
+              ) : r.past_reactions.length === 0 ? (
+                <span className="text-xs text-zinc-600">none on record</span>
+              ) : (
+                <div
+                  className="flex gap-1 text-[11px] tabular-nums"
+                  title={r.past_reactions
+                    .map(
+                      (p) =>
+                        `${p.date}: ${pct(p.move_pct)}` +
+                        (p.surprise_pct != null ? ` (EPS surprise ${p.surprise_pct}%)` : "")
+                    )
+                    .join(" | ")}
+                >
+                  {r.past_reactions.map((p) => (
+                    <span key={p.date} className={tone(p.move_pct)}>
+                      {pct(p.move_pct, 0)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </TableCell>
             <TableCell className="text-right">${r.price.toFixed(2)}</TableCell>
             <TableCell className={cn("text-right", tone(r.chg_5d))}>{pct(r.chg_5d)}</TableCell>
@@ -241,7 +276,9 @@ export default function CatalystWatchPage() {
             measures how much energy is stored: days to cover, short interest rising, price
             near its 3-month low, and how close the report is.{" "}
             <strong>It does not predict direction.</strong> The same setup falls hard on a bad
-            report. EARLY MOVE marks a sharp, heavy-volume up day before the report.
+            report. &ldquo;Last reports&rdquo; is the move in the first session after each of
+            the last four reports, newest first. EARLY MOVE marks a sharp, heavy-volume up
+            day before the report that beat the market by at least 4 points.
           </>
         ) : (
           <>

@@ -39,6 +39,7 @@ _PLAIN_SYMBOL = re.compile(r"^[A-Z]{1,5}$")
 _CACHE_TTL = 30 * 60
 _MAX_UPCOMING = 400       # symbols priced for the upcoming list
 _MAX_REACTING = 1500      # a busy earnings week has well over 1,000 reporters
+_MAX_HISTORY = 160        # companies whose past earnings reactions are looked up
 
 _cache: dict[str, tuple[float, dict]] = {}
 
@@ -91,6 +92,14 @@ def price_stats(df: pd.DataFrame) -> dict | None:
     low, high = float(window["low"].min()), float(window["high"].max())
     span = high - low
     avg_vol = float(vol.iloc[-21:-1].mean())
+    # A year's range, when there is most of a year of history. A stock can sit
+    # at its 3-month high and still be near the bottom of its year.
+    low_52w = high_52w = pos_52w = None
+    if len(df) >= 200:
+        year = df.tail(252)
+        low_52w, high_52w = float(year["low"].min()), float(year["high"].max())
+        if high_52w > low_52w:
+            pos_52w = _f((last - low_52w) / (high_52w - low_52w) * 100, 1)
     return {
         "price": _f(last),
         "chg_5d": _f((last / float(close.iloc[-6]) - 1) * 100) if len(close) >= 6 else 0.0,
@@ -98,6 +107,9 @@ def price_stats(df: pd.DataFrame) -> dict | None:
         "high_3m": _f(high),
         # 0 = sitting on the 3-month low, 100 = at the 3-month high
         "range_pos": _f((last - low) / span * 100, 1) if span > 0 else 50.0,
+        "low_52w": _f(low_52w) if low_52w is not None else None,
+        "high_52w": _f(high_52w) if high_52w is not None else None,
+        "range_pos_52w": pos_52w,
         "avg_volume": int(avg_vol),
         "last_day_pct": _f((last / float(close.iloc[-2]) - 1) * 100),
         "last_day_rvol": _f(float(vol.iloc[-1]) / avg_vol, 1) if avg_vol > 0 else 0.0,
@@ -105,19 +117,73 @@ def price_stats(df: pd.DataFrame) -> dict | None:
 
 
 def coiled_score(days_to_cover: float, si_change_pct: float, range_pos: float,
-                 days_until: int) -> float:
+                 days_until: int, range_pos_52w: float | None = None) -> float:
     """0-100: how much stored energy there is, NOT which way it goes.
 
       35  days to cover (trapped shorts), full at 10 days
       20  short interest rose since the last report, full at +20%
-      25  price near its 3-month low, full at the low
+      25  price is beaten down: the average of where it sits in its 3-month
+          and 52-week ranges, full at the low of both
       20  the event is close, full if today or tomorrow
     """
     dtc = 35.0 * min(max(days_to_cover, 0.0) / 10.0, 1.0)
     building = 20.0 * min(max(si_change_pct, 0.0) / 20.0, 1.0)
-    depressed = 25.0 * (1.0 - min(max(range_pos, 0.0), 100.0) / 100.0)
+    positions = [range_pos] + ([range_pos_52w] if range_pos_52w is not None else [])
+    position = sum(min(max(p, 0.0), 100.0) for p in positions) / len(positions)
+    depressed = 25.0 * (1.0 - position / 100.0)
     soon = 20.0 * max(0.0, 1.0 - max(days_until - 1, 0) / 5.0)
     return round(dtc + building + depressed + soon, 1)
+
+
+def past_reactions(df: pd.DataFrame, history: list[dict] | None, session: str = "",
+                   limit: int = 4) -> list[dict] | None:
+    """How the stock moved in the first session after each past report.
+
+    A report after the close is answered the next session, one before the
+    open the same session. The company's usual timing is taken from the
+    upcoming report (`session`); when it is unknown, the larger of the two
+    candidate days is used. Returns None when the history is unavailable,
+    and skips reports the price data does not cover.
+    """
+    if history is None or df is None or len(df) < 3:
+        return None
+    df = df.sort_index()
+    idx = pd.to_datetime(df.index)
+    days = [ts.date() for ts in (idx.tz_convert("UTC") if idx.tz is not None else idx)]
+    closes = df["close"].astype(float).tolist()
+
+    def move(i: int) -> float | None:
+        if 1 <= i < len(closes) and closes[i - 1] > 0:
+            return (closes[i] / closes[i - 1] - 1) * 100
+        return None
+
+    out = []
+    for h in history:
+        try:
+            reported = date.fromisoformat(h["date"])
+        except (KeyError, ValueError):
+            continue
+        i = next((k for k, d in enumerate(days) if d >= reported), None)
+        # The matched session must be the report's own (allowing a weekend or
+        # holiday). A report older than the price history would otherwise be
+        # pinned to the first bar and credited with an unrelated move.
+        if i is None or (days[i] - reported).days > 5:
+            continue
+        same_day, next_day = move(i), move(i + 1)
+        if session == "amc":
+            chosen, j = next_day, i + 1
+        elif session == "bmo":
+            chosen, j = same_day, i
+        else:
+            options = [(m, k) for m, k in ((same_day, i), (next_day, i + 1)) if m is not None]
+            chosen, j = max(options, key=lambda x: abs(x[0])) if options else (None, i)
+        if chosen is None:
+            continue
+        out.append({"date": h["date"], "reaction_date": days[j].isoformat(),
+                    "move_pct": _f(chosen), "surprise_pct": h.get("surprise_pct")})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def best_reaction(df: pd.DataFrame, since: date) -> dict | None:
@@ -158,6 +224,7 @@ def scan_catalyst_watch(
     min_market_cap: float = 300_000_000,
     min_reaction_pct: float = 5.0,
     min_reaction_rvol: float = 2.0,
+    min_excess_pct: float = 4.0,
     now: datetime | None = None,
 ) -> dict:
     """Build both lists. Returns {upcoming, reacting, data_ok, notes, ...}."""
@@ -222,8 +289,9 @@ def scan_catalyst_watch(
     bars: dict[str, pd.DataFrame] = {}
     try:
         if upcoming_syms:
-            # 3-month range needs about 63 sessions
-            bars.update(client.get_multi_bars(upcoming_syms, days=130))
+            # A year of sessions: the 52-week range and a year of past
+            # earnings reactions. SPY rides along as the market yardstick.
+            bars.update(client.get_multi_bars(upcoming_syms + ["SPY"], days=400))
         rest = [s for s in reacting_syms if s not in bars]
         if rest:
             # 20-day average volume plus the reaction window is enough here
@@ -231,6 +299,11 @@ def scan_catalyst_watch(
     except Exception as e:
         logger.warning("Catalyst watch: price data unavailable: %s", str(e)[:200])
         notes.append("Price data unavailable.")
+
+    # What the market itself did in the last session. A stock that merely
+    # rose with a strong tape has not made an "early move".
+    market = price_stats(bars.get("SPY"))
+    market_pct = market["last_day_pct"] if market else 0.0
 
     # ---- upcoming: coiled before the event
     upcoming: list[dict] = []
@@ -253,12 +326,40 @@ def scan_catalyst_watch(
             "si_change_pct": _f(si_chg, 1),
             "settlement_date": si.get("settlement_date", ""),
             **stats,
-            # A sharp up day on heavy volume before the report: someone is early
-            "early_move": bool(stats["last_day_pct"] >= min_reaction_pct
-                               and stats["last_day_rvol"] >= min_reaction_rvol),
-            "score": coiled_score(dtc, si_chg, stats["range_pos"], int(cal["days_until"])),
+            "last_day_vs_market": _f(stats["last_day_pct"] - market_pct),
+            # A sharp up day on heavy volume that the market does not explain
+            "early_move": bool(
+                stats["last_day_pct"] >= min_reaction_pct
+                and stats["last_day_rvol"] >= min_reaction_rvol
+                and stats["last_day_pct"] - market_pct >= min_excess_pct
+            ),
+            "score": coiled_score(dtc, si_chg, stats["range_pos"], int(cal["days_until"]),
+                                  stats.get("range_pos_52w")),
+            "past_reactions": None,
+            "typical_move_pct": None,
         })
     upcoming.sort(key=lambda r: r["score"], reverse=True)
+
+    # Past earnings reactions for the highest-scored names (one request per
+    # company, so it is capped; history is cached for a week).
+    def _attach(row: dict) -> None:
+        try:
+            reactions = past_reactions(
+                bars.get(row["symbol"]), ec.earnings_history(row["symbol"]), row["session"]
+            )
+        except Exception as e:
+            logger.debug("Past reactions failed for %s: %s", row["symbol"], e)
+            reactions = None
+        row["past_reactions"] = reactions
+        if reactions:
+            row["typical_move_pct"] = _f(
+                sum(abs(r["move_pct"]) for r in reactions) / len(reactions), 1
+            )
+
+    if upcoming:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(_attach, upcoming[:_MAX_HISTORY]))
 
     # ---- reacting: reported, and the market liked it
     reacting: list[dict] = []

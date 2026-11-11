@@ -9,6 +9,9 @@ interface PriceStats {
   low_3m: number;
   high_3m: number;
   range_pos: number;
+  low_52w?: number | null;
+  high_52w?: number | null;
+  range_pos_52w?: number | null;
   avg_volume: number;
   last_day_pct: number;
   last_day_rvol: number;
@@ -26,7 +29,17 @@ export interface UpcomingCatalyst extends PriceStats {
   si_change_pct: number;
   settlement_date: string;
   early_move: boolean;
+  last_day_vs_market?: number;
+  past_reactions?: PastReaction[] | null;
+  typical_move_pct?: number | null;
   score: number;
+}
+
+export interface PastReaction {
+  date: string;
+  reaction_date: string;
+  move_pct: number;
+  surprise_pct: number | null;
 }
 
 export interface ReactingCatalyst extends PriceStats {

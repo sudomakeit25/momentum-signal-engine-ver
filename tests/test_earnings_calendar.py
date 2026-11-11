@@ -52,6 +52,8 @@ class Limiter:
 def _clean(monkeypatch):
     from config.settings import settings
     ec._day_cache.clear()
+    ec._history_cache.clear()
+    history.clear()
     ec._last.update(source="", nasdaq={}, at="")
     fmp._outcomes.clear()
     fmp._symbol_refused.clear()
@@ -59,6 +61,9 @@ def _clean(monkeypatch):
     monkeypatch.setattr(fmp, "_limiter", Limiter())
     monkeypatch.setattr(settings, "fmp_api_key", "test-key-123")
     yield
+
+
+history: dict = {}
 
 
 def route(monkeypatch, nasdaq=None, fmp_handler=None):
@@ -69,6 +74,13 @@ def route(monkeypatch, nasdaq=None, fmp_handler=None):
     # Both modules use the same `requests` object, so one fake dispatches on
     # the host.
     def fake_get(url, params=None, headers=None, timeout=None):
+        if "/api/company/" in url:
+            calls.setdefault("history", []).append(url)
+            assert "Mozilla" in headers["User-Agent"]
+            out = history.get(url.split("/api/company/")[1].split("/")[0], Resp(500))
+            if isinstance(out, Exception):
+                raise out
+            return out
         if "api.nasdaq.com" in url:
             calls["nasdaq"].append(params["date"])
             assert "Mozilla" in headers["User-Agent"]
@@ -344,3 +356,45 @@ class TestHealthRoute:
         assert first["earnings"]["source"] == "nasdaq"
         assert c.get("/health/data?probe=true").json()["probed"] is None    # throttled
         assert len(calls["nasdaq"]) == 2
+
+
+class TestEarningsHistory:
+    BODY = {"status": {"rCode": 200}, "data": {"earningsSurpriseTable": {"rows": [
+        {"fiscalQtrEnd": "Mar 2026", "dateReported": "5/11/2026", "eps": 1.59,
+         "consensusForecast": "1.58", "percentageSurprise": "0.63"},
+        {"fiscalQtrEnd": "Jun 2026", "dateReported": "8/10/2026", "eps": -0.5,
+         "consensusForecast": "1.49", "percentageSurprise": "-133.56"},
+        {"fiscalQtrEnd": "bad", "dateReported": "N/A", "eps": "N/A"},
+        "junk",
+    ]}}}
+
+    def test_parsed_newest_first(self, monkeypatch):
+        calls = route(monkeypatch)
+        history["ACM"] = Resp(body=self.BODY)
+        rows = ec.earnings_history("acm")
+        assert rows == [
+            {"date": "2026-08-10", "eps": -0.5, "forecast": 1.49, "surprise_pct": -133.56},
+            {"date": "2026-05-11", "eps": 1.59, "forecast": 1.58, "surprise_pct": 0.63},
+        ]
+        ec.earnings_history("ACM")
+        assert len(calls["history"]) == 1                       # cached
+
+    def test_no_table_is_an_empty_history_not_a_failure(self, monkeypatch):
+        route(monkeypatch)
+        history["NEWCO"] = Resp(body={"status": {"rCode": 200}, "data": {"earningsSurpriseTable": None}})
+        assert ec.earnings_history("NEWCO") == []
+
+    @pytest.mark.parametrize("bad", [
+        Resp(403), Resp(200, body=None), Resp(200, body=[]),
+        Resp(200, body={"status": {"rCode": 400}, "data": None}), TimeoutError("slow"),
+    ])
+    def test_failures_are_none_and_retried_after_a_while(self, monkeypatch, bad):
+        calls = route(monkeypatch)
+        history["ACM"] = bad
+        clock = {"t": 5_000.0}
+        monkeypatch.setattr(ec.time, "time", lambda: clock["t"])
+        assert ec.earnings_history("ACM") is None
+        assert ec.earnings_history("ACM") is None and len(calls["history"]) == 1
+        clock["t"] += ec._FAIL_TTL + 1
+        ec.earnings_history("ACM")
+        assert len(calls["history"]) == 2

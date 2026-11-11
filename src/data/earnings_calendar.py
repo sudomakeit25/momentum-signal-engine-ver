@@ -141,6 +141,56 @@ def nasdaq_day(day: date) -> list[dict] | None:
     return rows
 
 
+_HISTORY_URL = "https://api.nasdaq.com/api/company/{symbol}/earnings-surprise"
+_HISTORY_OK_TTL = 7 * 24 * 3600     # past reports change once a quarter
+_history_cache: dict[str, tuple[float, list[dict] | None]] = {}
+
+
+def _history_fetch(symbol: str) -> list[dict] | None:
+    """Last few reported quarters, newest first, or None if unavailable."""
+    try:
+        resp = requests.get(_HISTORY_URL.format(symbol=symbol), headers=_HEADERS, timeout=8)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        if not isinstance(body, dict) or (body.get("status") or {}).get("rCode") != 200:
+            return None
+        rows = (((body.get("data") or {}).get("earningsSurpriseTable") or {}).get("rows")) or []
+        out = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                when = datetime.strptime(str(r.get("dateReported")), "%m/%d/%Y").date()
+            except ValueError:
+                continue
+            out.append({
+                "date": when.isoformat(),
+                "eps": _number(r.get("eps")),
+                "forecast": _number(r.get("consensusForecast")),
+                "surprise_pct": _number(r.get("percentageSurprise")),
+            })
+        out.sort(key=lambda x: x["date"], reverse=True)
+        return out
+    except Exception as e:
+        logger.debug("Earnings history unavailable for %s: %s", symbol, type(e).__name__)
+        return None
+
+
+def earnings_history(symbol: str) -> list[dict] | None:
+    """Past report dates with EPS and surprise for one company. None means
+    it could not be read (not that the company never reported)."""
+    symbol = symbol.upper()
+    hit = _history_cache.get(symbol)
+    if hit is not None:
+        fetched_at, rows = hit
+        if time.time() - fetched_at < (_HISTORY_OK_TTL if rows is not None else _FAIL_TTL):
+            return rows
+    rows = _history_fetch(symbol)
+    _history_cache[symbol] = (time.time(), rows)
+    return rows
+
+
 def _fmp_lookup(symbols: list[str], days: set[str]) -> tuple[set[str], set[str]]:
     """Per-symbol check with FMP. A symbol FMP refuses is simply not known."""
     from src.data import fmp_client
