@@ -292,6 +292,48 @@ class TestRefresh:
         by = {r["symbol"]: r for r in sc._load()}
         assert set(by) == {"NVDA", "LATE"} and by["NVDA"]["final"] is True
 
+    def _many_recent(self, n):
+        syms = [f"S{i:02d}" for i in range(n)]
+        sc.log_alerts([alert(symbol=s) for s in syms], now=datetime(2026, 11, 19, 10, 0, tzinfo=ET))
+        bars = {s: daily([(date(2026, 11, 19), 100.0), (date(2026, 11, 20), 101.0)]) for s in syms}
+        return syms, bars
+
+    def test_intraday_bars_are_fetched_a_few_symbols_at_a_time(self, monkeypatch):
+        # Found on 2026-11-11: one request for every pending alert's 5-minute
+        # bars took the host to 478 MB of its 512 MB.
+        syms, bars = self._many_recent(25)
+        calls = self._feeds(monkeypatch, bars)
+        sc.refresh_outcomes(now=datetime(2026, 11, 20, 12, 0, tzinfo=ET))
+        five = [c for c, kind in calls if kind == "5m"]
+        assert five and all(len(c) <= sc._BARS5_CHUNK for c in five)
+        assert sorted(s for c in five for s in c) == syms
+
+    def test_a_failed_intraday_piece_leaves_only_its_alerts_pending(self, monkeypatch):
+        syms, bars = self._many_recent(25)
+        def multi(symbols, days=200, timeframe=None):
+            if timeframe is not None and "S00" in symbols:
+                raise RuntimeError("alpaca error")
+            return {s: bars[s] for s in symbols} if timeframe is None else {}
+        monkeypatch.setattr(sc.client, "get_multi_bars", multi)
+        changed = sc.refresh_outcomes(now=datetime(2026, 11, 20, 12, 0, tzinfo=ET))
+        by = {r["symbol"]: r for r in sc._load()}
+        failed = syms[:sc._BARS5_CHUNK]
+        assert all(by[s]["outcome"] == {} for s in failed)
+        assert all(by[s]["outcome"] for s in syms if s not in failed)
+        assert changed == len(syms) - len(failed)
+
+    def test_same_outcomes_whether_fetched_in_pieces_or_at_once(self, monkeypatch):
+        syms, bars = self._many_recent(12)
+        self._feeds(monkeypatch, bars)
+        monkeypatch.setattr(sc, "_BARS5_CHUNK", 1000)
+        sc.refresh_outcomes(now=datetime(2026, 11, 20, 12, 0, tzinfo=ET))
+        whole = {r["symbol"]: r["outcome"] for r in sc._load()}
+        monkeypatch.setattr(sc, "_mem", None)
+        self._many_recent(12)
+        monkeypatch.setattr(sc, "_BARS5_CHUNK", 3)
+        sc.refresh_outcomes(now=datetime(2026, 11, 20, 12, 0, tzinfo=ET))
+        assert whole and {r["symbol"]: r["outcome"] for r in sc._load()} == whole
+
 
 # ------------------------------------------------------------------ summary
 

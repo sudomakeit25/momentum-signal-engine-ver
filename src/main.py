@@ -11,6 +11,10 @@ from config.settings import settings
 from src import heavy
 from src.api.routes import router, _scan_cache, _SCAN_CACHE_TTL
 
+# Before any background thread starts: make the allocator return freed memory
+# (see src/heavy.py; the host has 512 MB and kept running out).
+_ALLOCATOR = heavy.configure_allocator()
+
 PORT = int(os.environ.get("PORT", 8000))
 
 # Configure logging — uvicorn overrides basicConfig, so set levels explicitly

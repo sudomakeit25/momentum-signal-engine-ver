@@ -17,7 +17,7 @@ from src import heavy
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
-    monkeypatch.setattr(heavy, "_state", {"steps": {}, "skipped": {}, "waited_out": 0})
+    monkeypatch.setattr(heavy, "_state", {"steps": {}, "skipped": {}, "waited_out": 0, "allocator": {}})
     monkeypatch.setattr(heavy, "_lock", threading.RLock())
 
 
@@ -102,6 +102,50 @@ class TestSkipOptional:
         assert heavy.rss_mb() is None or heavy.rss_mb() > 0
         assert heavy.peak_mb() > 0
         heavy.release()
+
+
+class TestAllocator:
+    def test_no_op_off_linux(self, monkeypatch):
+        monkeypatch.setattr(heavy.sys, "platform", "darwin")
+        assert heavy.configure_allocator() == {}
+        assert heavy.status()["allocator"] == {}
+
+    def test_sets_arena_max_and_fixed_thresholds_on_linux(self, monkeypatch):
+        calls = []
+
+        class Libc:
+            def mallopt(self, param, value):
+                calls.append((param, value))
+                return 1
+
+        monkeypatch.setattr(heavy.sys, "platform", "linux")
+        monkeypatch.setattr(heavy.ctypes, "CDLL", lambda name: Libc())
+        applied = heavy.configure_allocator()
+        assert applied == {"arena_max": True, "mmap_threshold": True, "trim_threshold": True}
+        assert (-8, 2) in calls and (-3, 131072) in calls and (-1, 131072) in calls
+        assert heavy.status()["allocator"] == applied
+
+    def test_a_refused_setting_is_reported_and_a_missing_libc_never_raises(self, monkeypatch):
+        class Libc:
+            def mallopt(self, param, value):
+                return 0 if param == -8 else 1
+
+        monkeypatch.setattr(heavy.sys, "platform", "linux")
+        monkeypatch.setattr(heavy.ctypes, "CDLL", lambda name: Libc())
+        assert heavy.configure_allocator()["arena_max"] is False
+
+        def missing(name):
+            raise OSError("libc.so.6: cannot open shared object file")
+
+        monkeypatch.setattr(heavy.ctypes, "CDLL", missing)
+        assert heavy.configure_allocator() == {}
+
+    def test_applied_when_the_app_module_loads(self):
+        import inspect
+        from src import main
+        src = inspect.getsource(main)
+        assert "heavy.configure_allocator()" in src
+        assert src.index("heavy.configure_allocator()") < src.index("def lifespan")
 
 
 class TestWiring:

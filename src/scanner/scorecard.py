@@ -39,6 +39,7 @@ HORIZONS = ("m15", "h1", "eod", "d1", "d5")
 _lock = threading.RLock()
 _mem: list[dict] | None = None      # in-process copy; the store when Redis is absent
 _last_refresh = 0.0
+_BARS5_CHUNK = 10   # symbols per five-minute-bar request when measuring outcomes
 
 
 # -------------------------------------------------------------------- store
@@ -219,29 +220,51 @@ def refresh_outcomes(now: datetime | None = None, min_interval: float = 300.0) -
     })
     try:
         daily = client.get_multi_bars(symbols, days=40)
-        bars5: dict[str, pd.DataFrame] = {}
-        if recent:
-            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-            bars5 = client.get_multi_bars(
-                recent, timeframe=TimeFrame(5, TimeFrameUnit.Minute), days=8
-            )
     except Exception as e:
         logger.warning("Scorecard: price data unavailable: %s", str(e)[:160])
         return 0
 
-    changed = 0
     by_id = {r["id"]: r for r in pending}
-    for rid, r in by_id.items():
-        try:
-            new = evaluate(r, bars5.get(r["symbol"]), daily.get(r["symbol"]), today)
-        except Exception as e:
-            logger.debug("Scorecard: evaluate failed for %s: %s", rid, e)
-            continue
-        age = (today - date.fromisoformat(r["date"])).days
-        final = "d5" in new or age > 12        # past 12 days nothing more will arrive
-        if new != (r.get("outcome") or {}) or final != r.get("final"):
-            r["outcome"], r["final"] = new, final
-            changed += 1
+    by_symbol: dict[str, list[dict]] = {}
+    for r in pending:
+        by_symbol.setdefault(r["symbol"], []).append(r)
+    changed = 0
+
+    def _score(syms: list[str], bars5: dict[str, pd.DataFrame]) -> None:
+        nonlocal changed
+        for sym in syms:
+            for r in by_symbol.get(sym, []):
+                try:
+                    new = evaluate(r, bars5.get(sym), daily.get(sym), today)
+                except Exception as e:
+                    logger.debug("Scorecard: evaluate failed for %s: %s", r["id"], e)
+                    continue
+                age = (today - date.fromisoformat(r["date"])).days
+                final = "d5" in new or age > 12        # past 12 days nothing more will arrive
+                if new != (r.get("outcome") or {}) or final != r.get("final"):
+                    r["outcome"], r["final"] = new, final
+                    changed += 1
+
+    recent_set = set(recent)
+    _score([s for s in symbols if s not in recent_set], {})
+    # Five-minute bars a few symbols at a time: fetching them for every
+    # pending alert at once (over 100 symbols on a busy day) took the host
+    # to 478 MB of its 512 MB on 2026-11-11. A piece that fails is left
+    # pending and tried again next time.
+    if recent:
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        for i in range(0, len(recent), _BARS5_CHUNK):
+            chunk = recent[i:i + _BARS5_CHUNK]
+            try:
+                bars5 = client.get_multi_bars(
+                    chunk, timeframe=TimeFrame(5, TimeFrameUnit.Minute), days=8
+                )
+            except Exception as e:
+                logger.warning("Scorecard: 5-minute bars unavailable for %s...: %s",
+                               chunk[0], str(e)[:160])
+                continue
+            _score(chunk, bars5)
+            del bars5
 
     if changed:
         with _lock:
