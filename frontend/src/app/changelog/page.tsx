@@ -4,6 +4,18 @@ import { FileText } from "lucide-react";
 
 const CHANGELOG = [
   {
+    version: "0.13.0",
+    date: "2026-11-11",
+    changes: [
+      "Telegram alerts: signals (with entry, stop and target), intraday patterns and forming-setup watches go to a Telegram bot; a send that fails is retried for up to 30 minutes; set up on the Notifications page",
+      "The server now stays awake on weekdays from 4:00 AM to 4:15 PM New York time, so intraday alerts, the scorecard and the paper auto-trader run for the whole session",
+      "Catalyst Watch: position in the 52-week range, the move after each of the last four earnings reports, and EARLY MOVE now requires beating the market by 4 points",
+      "Recent performance on every chart page: the last 5, 10 or 20 sessions day by day, the same window for peers and the market, and headlines from the biggest days",
+      "Fixed: a failed text alert could stall the intraday scan for over two minutes",
+      "Known limit: text alerts through the email gateway fail on the current hosting plan, which blocks outbound email; use Telegram",
+    ],
+  },
+  {
     version: "0.12.0",
     date: "2026-11-10",
     changes: [

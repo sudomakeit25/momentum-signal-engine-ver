@@ -10,6 +10,7 @@ import { VolumePanel } from "@/components/chart/volume-panel";
 import { ChartToolbar } from "@/components/chart/chart-toolbar";
 import { StockInfoHeader } from "@/components/chart/stock-info-header";
 import { TechnicalAnalysisPanel } from "@/components/chart/technical-analysis-panel";
+import { RecentPerformancePanel } from "@/components/chart/recent-performance-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function ChartPage() {
@@ -102,6 +103,8 @@ export default function ChartPage() {
           )}
         </>
       )}
+
+      <RecentPerformancePanel symbol={symbol} />
     </div>
   );
 }

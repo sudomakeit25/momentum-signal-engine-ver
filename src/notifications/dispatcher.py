@@ -7,14 +7,17 @@ import logging
 import json
 import smtplib
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests as http_requests
 
 logger = logging.getLogger("mse.notifications")
+_ET = ZoneInfo("America/New_York")
 
 _SMS_FINGERPRINT_KEY = "mse:sms_fingerprints"  # { hash: iso_ts } — 30m TTL
 _SMS_FINGERPRINT_TTL = 30 * 60  # seconds
@@ -109,8 +112,12 @@ def _intraday_arrow(pattern_type: str) -> str:
     }.get(pattern_type, "")
 
 
-def _format_intraday_body(patterns: list, header: str | None = None) -> str:
-    """Build a short body for SMS / push from intraday patterns."""
+def _format_intraday_body(
+    patterns: list, header: str | None = None, limit: int = 5, show_more: bool = False
+) -> str:
+    """Build a short body for SMS / push from intraday patterns. SMS and push
+    keep the first 5; Telegram passes a larger `limit` and `show_more` so
+    nothing is silently cut."""
     if not patterns:
         return ""
     if header is None:
@@ -120,11 +127,13 @@ def _format_intraday_body(patterns: list, header: str | None = None) -> str:
             else f"MSE Intraday: {len(patterns)} patterns"
         )
     lines = [header + _header_suffix.get()]
-    for p in patterns[:5]:
+    for p in patterns[:limit]:
         glyph = _intraday_arrow(p.pattern_type)
         lines.append(
             f"{glyph} {p.symbol} ${p.trigger_price:.2f} ({p.move_pct:+.1f}%/{p.recovery_pct:+.1f}%)"
         )
+    if show_more and len(patterns) > limit:
+        lines.append(f"and {len(patterns) - limit} more")
     return "\n".join(lines)
 
 
@@ -178,8 +187,119 @@ def send_expo_push_intraday(tokens: list[str], patterns: list) -> bool:
         return False
 
 
+_SMTP_TIMEOUT = 15  # seconds; without one a blocked mail port stalls the scan loop for minutes
+
+
+def _format_telegram_signals(signals: list, limit: int = 10) -> str:
+    """Telegram body for trade signals. No 160-character cap, so each signal
+    carries its levels: entry, stop, target, reward to risk, and the reason."""
+    deduped = _deduped_signals_for_sms(signals)
+    deduped.sort(key=lambda s: getattr(s, "confidence", 0), reverse=True)
+    if not deduped:
+        return ""
+    lines = ["MSE Alert" + _header_suffix.get()]
+    for s in deduped[:limit]:
+        setup = s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
+        lines.append("")
+        lines.append(f"{s.action.value} {s.symbol}  {setup.replace('_', ' ')}  {s.confidence * 100:.0f}%")
+        lines.append(f"entry ${s.entry:.2f} | stop ${s.stop_loss:.2f} | target ${s.target:.2f} | R:R {s.rr_ratio:.1f}")
+        if s.reason:
+            lines.append(s.reason[:160])
+    if len(deduped) > limit:
+        lines.append("")
+        lines.append(f"and {len(deduped) - limit} more")
+    return "\n".join(lines)
+
+
+# Telegram sends that failed. The scan loops mark an alert as seen whether or
+# not it was delivered, so without this queue a Telegram outage at the moment
+# an alert fires would lose it for good. `retry_failed_telegram` is called
+# from the intraday loop every few minutes. Alerts older than the age limit
+# are dropped: on delayed data they are stale by then.
+_TG_PENDING_MAX = 20
+_TG_PENDING_MAX_AGE = 30 * 60  # seconds
+_tg_pending: list[dict] = []
+_tg_lock = threading.Lock()
+
+
+def _queue_telegram(kind: str, body: str, fp: str) -> None:
+    with _tg_lock:
+        if any(item["fp"] == fp for item in _tg_pending):
+            return
+        _tg_pending.append({"kind": kind, "body": body, "fp": fp, "first": time.time()})
+        dropped = len(_tg_pending) - _TG_PENDING_MAX
+        if dropped > 0:
+            del _tg_pending[:dropped]
+    if dropped > 0:
+        logger.warning("Telegram retry queue full: dropped %d oldest alerts", dropped)
+    logger.info("Telegram %s alert queued for retry", kind)
+
+
+def telegram_pending() -> int:
+    with _tg_lock:
+        return len(_tg_pending)
+
+
+def retry_failed_telegram(now: float | None = None) -> int:
+    """Resend queued Telegram alerts, oldest first. Stops at the first failure
+    so a Telegram outage costs one request per call, not one per alert.
+    Returns how many were delivered. Never raises."""
+    try:
+        from src.notifications import telegram
+        now = time.time() if now is None else now
+        with _tg_lock:
+            fresh = [i for i in _tg_pending if now - i["first"] <= _TG_PENDING_MAX_AGE]
+            expired = len(_tg_pending) - len(fresh)
+            _tg_pending[:] = fresh
+            batch = list(fresh)
+        if expired:
+            logger.warning("Telegram retry: dropped %d alerts older than %d minutes",
+                           expired, _TG_PENDING_MAX_AGE // 60)
+        if not batch or not telegram.configured():
+            return 0
+        delivered = 0
+        for item in batch:
+            first = datetime.fromtimestamp(item["first"], tz=_ET).strftime("%H:%M")
+            if not telegram.send_text(f"{item['body']}\n\n(late: first attempt at {first} ET failed)"):
+                break
+            _record_sms_fingerprint(item["fp"])
+            delivered += 1
+            with _tg_lock:
+                _tg_pending[:] = [i for i in _tg_pending if i is not item]
+        if delivered:
+            logger.info("Telegram retry: delivered %d queued alerts", delivered)
+        return delivered
+    except Exception as e:
+        logger.warning("Telegram retry failed: %s", type(e).__name__)
+        return 0
+
+
+def _send_telegram(kind: str, body: str) -> bool:
+    """Send an alert body to Telegram when a bot is configured. Uses the same
+    30-minute duplicate guard as SMS, keyed separately. A failed send is
+    queued for `retry_failed_telegram`. Never raises."""
+    fp = None
+    try:
+        from src.notifications import telegram
+        if not body or not telegram.configured():
+            return False
+        fp = _fingerprint_of_body(f"telegram:{kind}:{body}")
+        recent = _recent_sms_fingerprints()
+        if fp in recent:
+            logger.info("Telegram %s alert suppressed (duplicate body sent %s)", kind, recent[fp])
+            return False
+        if telegram.send_text(body):
+            _record_sms_fingerprint(fp)
+            return True
+    except Exception as e:
+        logger.warning("Telegram %s dispatch failed: %s", kind, type(e).__name__)
+    if fp is not None:
+        _queue_telegram(kind, body, fp)
+    return False
+
+
 def dispatch_intraday_patterns(patterns: list) -> dict:
-    """Route detected intraday patterns to SMS + push.
+    """Route detected intraday patterns to Telegram + SMS + push.
 
     Distinct from `dispatch_alerts` because the dedup grain differs:
     intraday patterns are keyed by (symbol, pattern_type, trading_day)
@@ -187,7 +307,7 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
     fire once. Reuses the same SMS / push primitives for delivery and
     the same 30-min body fingerprint as a final spam guard.
     """
-    results = {"sms": False, "push": False}
+    results = {"sms": False, "push": False, "telegram": False}
     if not patterns:
         return results
 
@@ -195,6 +315,10 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
     if not config.auto_alerts_enabled:
         logger.info("Intraday auto-alerts disabled, skipping dispatch")
         return results
+
+    # Telegram first: it is the quick channel, and a slow SMS attempt must not delay it.
+    results["telegram"] = _send_telegram(
+        "intraday", _format_intraday_body(patterns, limit=30, show_more=True))
 
     if config.sms_to and config.sms_consent:
         body = _format_intraday_body(patterns)
@@ -219,7 +343,7 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
                             msg["From"] = _settings.smtp_email
                             msg["To"] = f"{digits}@{gateway}"
                             msg["Subject"] = ""
-                            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=_SMTP_TIMEOUT) as server:
                                 server.login(_settings.smtp_email, _settings.smtp_password)
                                 server.send_message(msg)
                             _record_sms_fingerprint(fp)
@@ -252,9 +376,10 @@ def dispatch_intraday_patterns(patterns: list) -> dict:
     return results
 
 
-def _format_watch_body(watches: list) -> str:
+def _format_watch_body(watches: list, max_chars: int = 155) -> str:
     """Short SMS / push body for forming-setup watches. Carrier gateways cap
-    at 160 chars, so lines are added only while they fit."""
+    at 160 chars, so lines are added only while they fit. Telegram passes a
+    larger `max_chars`."""
     lines = [("MSE Watch" if len(watches) == 1 else f"MSE Watch: {len(watches)}")
              + _header_suffix.get()]
     for w in watches:
@@ -264,7 +389,7 @@ def _format_watch_body(watches: list) -> str:
             line = f"{w.symbol} at VWAP {w.upper:.2f}, watch hold/reject"
         else:
             line = f"{w.symbol} {w.watch_type}"
-        if len("\n".join(lines + [line])) > 155:
+        if len("\n".join(lines + [line])) > max_chars:
             break
         lines.append(line)
     return "\n".join(lines)
@@ -287,7 +412,7 @@ def _send_text_sms(config, body: str) -> bool:
         msg["From"] = _settings.smtp_email
         msg["To"] = f"{digits}@{gateway}"
         msg["Subject"] = ""
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=_SMTP_TIMEOUT) as server:
             server.login(_settings.smtp_email, _settings.smtp_password)
             server.send_message(msg)
         return True
@@ -314,7 +439,7 @@ def dispatch_intraday_watches(watches: list) -> dict:
     SMS needs consent, and the 30-minute body fingerprint guards against
     repeats. Callers dedupe per (symbol, watch_type, trading day).
     """
-    results = {"sms": False, "push": False}
+    results = {"sms": False, "push": False, "telegram": False}
     if not watches:
         return results
 
@@ -322,6 +447,8 @@ def dispatch_intraday_watches(watches: list) -> dict:
     if not config.auto_alerts_enabled:
         logger.info("Intraday auto-alerts disabled, skipping watch dispatch")
         return results
+
+    results["telegram"] = _send_telegram("watch", _format_watch_body(watches, max_chars=3500))
 
     body = _format_watch_body(watches)
 
@@ -670,7 +797,7 @@ def send_email_sms(to_phone: str, carrier: str, signals: list) -> bool:
         msg["To"] = to_addr
         msg["Subject"] = ""
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=_SMTP_TIMEOUT) as server:
             server.login(settings.smtp_email, settings.smtp_password)
             server.send_message(msg)
 
@@ -721,7 +848,7 @@ def send_sms(to_phone: str, signals: list) -> bool:
 def dispatch_alerts(signals: list) -> dict:
     """Send alerts through all enabled channels. Returns status per channel."""
     config = load_config()
-    results = {"webhook": False, "sms": False, "push": False}
+    results = {"webhook": False, "sms": False, "push": False, "telegram": False}
 
     logger.info(
         "dispatch_alerts called: %d signals, auto_enabled=%s, sms_to=%s, sms_consent=%s, sms_method=%s, sms_carrier=%s, webhook_url=%s",
@@ -740,6 +867,9 @@ def dispatch_alerts(signals: list) -> dict:
                 config.min_confidence * 100, len(filtered), len(signals))
     if not filtered:
         return results
+
+    # Telegram first: it is the quick channel, and a slow SMS attempt must not delay it.
+    results["telegram"] = _send_telegram("signals", _format_telegram_signals(filtered))
 
     if config.webhook_url:
         results["webhook"] = send_webhook(config.webhook_url, config.webhook_platform, filtered)
@@ -780,6 +910,7 @@ def dispatch_alerts(signals: list) -> dict:
                 "reason": s.reason[:100],
                 "sms_sent": results["sms"],
                 "webhook_sent": results["webhook"],
+                "telegram_sent": results["telegram"],
             })
     except Exception as e:
         logger.debug("Alert history logging failed: %s", e)

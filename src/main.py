@@ -239,7 +239,8 @@ def _refresh_loop():
                 try:
                     dispatch_results = dispatch_alerts(new_signals)
                     logger.info(
-                        "Auto-dispatch result: webhook=%s, sms=%s",
+                        "Auto-dispatch result: telegram=%s, webhook=%s, sms=%s",
+                        dispatch_results.get("telegram"),
                         dispatch_results["webhook"], dispatch_results["sms"],
                     )
                 except Exception as e:
@@ -424,6 +425,7 @@ def _intraday_scan_loop():
         dispatch_alerts,
         dispatch_intraday_patterns,
         dispatch_intraday_watches,
+        retry_failed_telegram,
     )
     from datetime import datetime
 
@@ -435,6 +437,11 @@ def _intraday_scan_loop():
 
     while not _stop_event.is_set():
         try:
+            # Resend Telegram alerts that failed earlier (the loops mark alerts
+            # seen whether or not they were delivered). Runs outside market
+            # hours too, because the refresh loop's alerts can fire any time.
+            retry_failed_telegram()
+
             if not _is_market_hours_et():
                 _stop_event.wait(_INTRADAY_INTERVAL)
                 continue
@@ -490,8 +497,8 @@ def _intraday_scan_loop():
                     with alert_label(delay_suffix):
                         result = dispatch_intraday_patterns(new_patterns)
                     logger.info(
-                        "Intraday dispatch result: sms=%s push=%s",
-                        result.get("sms"), result.get("push"),
+                        "Intraday dispatch result: telegram=%s sms=%s push=%s",
+                        result.get("telegram"), result.get("sms"), result.get("push"),
                     )
                 except Exception as e:
                     logger.warning("Intraday dispatch failed: %s", e)
@@ -539,8 +546,8 @@ def _intraday_scan_loop():
                         with alert_label(delay_suffix):
                             result = dispatch_alerts(new_setups)
                         logger.info(
-                            "Movers dispatch result: webhook=%s sms=%s",
-                            result.get("webhook"), result.get("sms"),
+                            "Movers dispatch result: telegram=%s webhook=%s sms=%s",
+                            result.get("telegram"), result.get("webhook"), result.get("sms"),
                         )
                     except Exception as e:
                         logger.warning("Movers dispatch failed: %s", e)
@@ -562,8 +569,8 @@ def _intraday_scan_loop():
                         with alert_label(delay_suffix):
                             result = dispatch_intraday_watches(new_watches)
                         logger.info(
-                            "Watch dispatch result: sms=%s push=%s",
-                            result.get("sms"), result.get("push"),
+                            "Watch dispatch result: telegram=%s sms=%s push=%s",
+                            result.get("telegram"), result.get("sms"), result.get("push"),
                         )
                     except Exception as e:
                         logger.warning("Watch dispatch failed: %s", e)

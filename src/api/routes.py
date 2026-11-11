@@ -1,5 +1,6 @@
 """FastAPI routes for the Momentum Signal Engine."""
 
+import threading
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +63,19 @@ def health_keepalive():
     reached the service's own address."""
     from src import keepalive
     return keepalive.status()
+
+
+@router.get("/recent-performance/{symbol}")
+def recent_performance_route(
+    symbol: str,
+    sessions: int = Query(default=10, ge=2, le=30),
+    peers: str = Query(default="", max_length=80, description="Comma-separated tickers; blank uses the symbol's peer group"),
+):
+    """Day-by-day table for the last N sessions, the change against peers
+    and the market over the same window, and headlines from the biggest days."""
+    from src.scanner import recent_performance as rp
+    sym = symbol.strip().upper()
+    return rp.recent_performance(sym, sessions, rp.parse_peers(peers, sym) or None)
 
 
 @router.get("/scanner/catalyst-watch")
@@ -2196,6 +2210,44 @@ def test_telegram(
     """Test Telegram bot connection."""
     ok = send_telegram(bot_token, chat_id, message)
     return {"status": "sent" if ok else "error"}
+
+
+_telegram_test_at = 0.0
+_TELEGRAM_TEST_EVERY = 60  # seconds; the endpoint is public, so it must not become a way to flood the chat
+_telegram_test_lock = threading.Lock()
+
+
+@router.get("/notifications/telegram/status")
+def telegram_status():
+    """Whether the Telegram bot is set up (TELEGRAM_BOT_TOKEN and
+    TELEGRAM_CHAT_ID in the environment), how the last send went, and how
+    many failed alerts are waiting to be retried. Returns neither the token
+    nor the chat id."""
+    from src.notifications import telegram
+    from src.notifications.dispatcher import telegram_pending
+    return {**telegram.status(), "pending_retry": telegram_pending()}
+
+
+@router.post("/notifications/telegram/test")
+def telegram_test():
+    """Send one fixed test message to the configured Telegram chat. At most
+    one a minute. Takes no parameters: the message text and the destination
+    cannot be chosen by the caller."""
+    from src.notifications import telegram
+    global _telegram_test_at
+    if not telegram.configured():
+        return {"status": "not_configured",
+                "message": "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID on the server first."}
+    # Sync routes run on a thread pool, so the check and the claim must be atomic.
+    with _telegram_test_lock:
+        wait = _TELEGRAM_TEST_EVERY - (time.time() - _telegram_test_at)
+        if wait > 0:
+            return {"status": "wait", "message": f"Try again in {int(wait) + 1} seconds."}
+        _telegram_test_at = time.time()
+    ok = telegram.send_text("MSE test: Telegram alerts are connected.")
+    state = telegram.status()
+    return {"status": "sent" if ok else "error",
+            "message": "Test message sent." if ok else (state["last_error"] or "Send failed.")}
 
 
 @router.post("/notifications/test-discord")

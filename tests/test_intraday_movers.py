@@ -505,7 +505,7 @@ class TestWatchDispatch:
 
     def test_empty_list_sends_nothing(self):
         from src.notifications.dispatcher import dispatch_intraday_watches
-        assert dispatch_intraday_watches([]) == {"sms": False, "push": False}
+        assert dispatch_intraday_watches([]) == {"sms": False, "push": False, "telegram": False}
 
     def test_disabled_alerts_send_nothing(self, monkeypatch):
         from src.notifications import dispatcher as d
@@ -513,7 +513,7 @@ class TestWatchDispatch:
         monkeypatch.setattr(d, "load_config",
                             lambda: d.NotificationConfig(auto_alerts_enabled=False))
         monkeypatch.setattr(d, "_send_text_sms", lambda c, b: sent.append(b) or True)
-        assert d.dispatch_intraday_watches([self._watch()]) == {"sms": False, "push": False}
+        assert d.dispatch_intraday_watches([self._watch()]) == {"sms": False, "push": False, "telegram": False}
         assert sent == []
 
     def test_enabled_sends_once_with_levels(self, monkeypatch):

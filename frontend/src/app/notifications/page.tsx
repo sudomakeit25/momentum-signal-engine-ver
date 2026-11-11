@@ -18,6 +18,18 @@ interface NotificationConfig {
   min_confidence: number;
 }
 
+interface TelegramStatus {
+  configured: boolean;
+  has_token: boolean;
+  has_chat_id: boolean;
+  sent: number;
+  failed: number;
+  last_ok_at: string | null;
+  last_attempt_at: string | null;
+  last_error: string | null;
+  pending_retry?: number;
+}
+
 const DEFAULT_CONFIG: NotificationConfig = {
   webhook_url: "",
   webhook_platform: "discord",
@@ -53,9 +65,48 @@ export default function NotificationsPage() {
   const [notifyStatus, setNotifyStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [message, setMessage] = useState("");
+  // Whether the current message reports success; set with the message so a
+  // later error is never drawn green because an earlier action succeeded.
+  const [messageOk, setMessageOk] = useState(true);
+  const say = (text: string, ok: boolean) => {
+    setMessage(text);
+    setMessageOk(ok);
+  };
   const [loaded, setLoaded] = useState(false);
+  const [telegram, setTelegram] = useState<TelegramStatus | null>(null);
+  const [tgTestStatus, setTgTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const loadTelegram = () =>
+    fetch(`${apiBase}/notifications/telegram/status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setTelegram(data))
+      .catch(() => setTelegram(null));
+
+  useEffect(() => {
+    loadTelegram();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase]);
+
+  const testTelegram = async () => {
+    setTgTestStatus("sending");
+    try {
+      const res = await fetch(`${apiBase}/notifications/telegram/test`, { method: "POST" });
+      const data = await res.json();
+      if (data.status === "sent") {
+        setTgTestStatus("sent");
+        say("Telegram test message sent. Check the chat with your bot.", true);
+      } else {
+        setTgTestStatus("error");
+        say(data.message || "Telegram test failed", false);
+      }
+    } catch {
+      setTgTestStatus("error");
+      say("Network error", false);
+    }
+    loadTelegram();
+  };
 
   // Load config from backend on mount
   useEffect(() => {
@@ -95,15 +146,15 @@ export default function NotificationsPage() {
       const data = await res.json();
       if (data.status === "saved") {
         setSaveStatus("saved");
-        setMessage("Configuration saved!");
+        say("Configuration saved!", true);
         setTimeout(() => setSaveStatus("idle"), 2000);
       } else {
         setSaveStatus("error");
-        setMessage("Failed to save");
+        say("Failed to save", false);
       }
     } catch {
       setSaveStatus("error");
-      setMessage("Network error");
+      say("Network error", false);
     }
   };
 
@@ -118,14 +169,14 @@ export default function NotificationsPage() {
       const data = await res.json();
       if (data.status === "sent") {
         setTestStatus("sent");
-        setMessage("Test message sent!");
+        say("Test message sent!", true);
       } else {
         setTestStatus("error");
-        setMessage(data.message || "Failed");
+        say(data.message || "Failed", false);
       }
     } catch {
       setTestStatus("error");
-      setMessage("Network error");
+      say("Network error", false);
     }
   };
 
@@ -140,14 +191,14 @@ export default function NotificationsPage() {
       const data = await res.json();
       if (data.status === "sent") {
         setSmsTestStatus("sent");
-        setMessage("Test SMS sent!");
+        say("Test SMS sent!", true);
       } else {
         setSmsTestStatus("error");
-        setMessage("SMS failed — check Twilio config on server");
+        say("SMS failed. Check the SMS settings on the server.", false);
       }
     } catch {
       setSmsTestStatus("error");
-      setMessage("Network error");
+      say("Network error", false);
     }
   };
 
@@ -162,17 +213,17 @@ export default function NotificationsPage() {
       const data = await res.json();
       if (data.status === "sent") {
         setNotifyStatus("sent");
-        setMessage(`Sent ${data.signals_count} signals!`);
+        say(`Sent ${data.signals_count} signals!`, true);
       } else if (data.status === "no_signals") {
         setNotifyStatus("sent");
-        setMessage("No signals right now");
+        say("No signals right now", true);
       } else {
         setNotifyStatus("error");
-        setMessage(data.message || "Failed");
+        say(data.message || "Failed", false);
       }
     } catch {
       setNotifyStatus("error");
-      setMessage("Network error");
+      say("Network error", false);
     }
   };
 
@@ -233,6 +284,64 @@ export default function NotificationsPage() {
             <span>100%</span>
           </div>
         </div>
+      </div>
+
+      {/* Telegram bot (set up on the server, not here) */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Send className="h-4 w-4 text-sky-400" />
+            <h2 className="text-sm font-semibold text-zinc-300">Telegram alerts</h2>
+          </div>
+          <span
+            className={cn(
+              "rounded border px-1.5 py-0.5 text-[10px]",
+              telegram?.configured
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-zinc-700 bg-zinc-800 text-zinc-400"
+            )}
+          >
+            {telegram == null ? "Status unknown" : telegram.configured ? "Connected" : "Not set up"}
+          </span>
+        </div>
+        <p className="text-xs text-zinc-500">
+          Signals, intraday patterns and forming-setup watches are sent to a Telegram bot when
+          Auto-Alerts is on. It needs no phone number, and it works on hosts that block email,
+          where the SMS email gateway fails.
+        </p>
+        {telegram && !telegram.configured && (
+          <p className="text-xs text-amber-400">
+            Missing on the server: {[!telegram.has_token && "TELEGRAM_BOT_TOKEN", !telegram.has_chat_id && "TELEGRAM_CHAT_ID"]
+              .filter(Boolean)
+              .join(" and ")}
+            . See the setup steps below.
+          </p>
+        )}
+        {telegram?.configured && (
+          <p className="text-xs text-zinc-500">
+            Sent since the last restart: {telegram.sent}
+            {telegram.failed > 0 ? `, failed: ${telegram.failed}` : ""}
+            {telegram.last_ok_at ? `. Last delivered ${new Date(telegram.last_ok_at).toLocaleString()}` : ""}
+          </p>
+        )}
+        {telegram?.last_error && (
+          <p className="text-xs text-red-400">Last error: {telegram.last_error}</p>
+        )}
+        {(telegram?.pending_retry ?? 0) > 0 && (
+          <p className="text-xs text-amber-400">
+            {telegram?.pending_retry} alert{telegram?.pending_retry === 1 ? "" : "s"} waiting to be
+            retried (every 5 minutes, for up to 30 minutes).
+          </p>
+        )}
+        <Button
+          onClick={testTelegram}
+          disabled={!telegram?.configured || tgTestStatus === "sending"}
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+        >
+          {tgTestStatus === "sending" ? "Sending..." : "Send test message"}
+        </Button>
       </div>
 
       {/* Webhook config */}
@@ -432,12 +541,12 @@ export default function NotificationsPage() {
         <div
           className={cn(
             "flex items-center gap-2 rounded-md p-3 text-sm",
-            testStatus === "sent" || notifyStatus === "sent" || smsTestStatus === "sent" || saveStatus === "saved"
+            messageOk
               ? "bg-emerald-950/30 text-emerald-400"
               : "bg-red-950/30 text-red-400"
           )}
         >
-          {testStatus === "sent" || notifyStatus === "sent" || smsTestStatus === "sent" || saveStatus === "saved" ? (
+          {messageOk ? (
             <Check className="h-4 w-4" />
           ) : (
             <AlertCircle className="h-4 w-4" />
@@ -473,10 +582,22 @@ export default function NotificationsPage() {
           <div>
             <h3 className="font-semibold text-zinc-300">Telegram</h3>
             <ol className="ml-4 list-decimal space-y-1">
-              <li>Message @BotFather on Telegram to create a bot</li>
-              <li>Get your bot token and your chat ID</li>
-              <li>Use format: https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage?chat_id=&lt;CHAT_ID&gt;</li>
+              <li>In Telegram, message @BotFather, send /newbot and follow the prompts. It gives you a bot token.</li>
+              <li>Open your new bot&apos;s chat and press Start (or send it any message).</li>
+              <li>
+                In your browser open https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates and find
+                &quot;chat&quot;: {"{"}&quot;id&quot;: ...{"}"}. That number is your chat ID.
+              </li>
+              <li>Set both as environment variables on the server, then use &quot;Send test message&quot; above:</li>
             </ol>
+            <pre className="mt-1 rounded bg-zinc-800 p-2 text-[10px] text-zinc-400">
+{`TELEGRAM_BOT_TOKEN=123456789:AA...
+TELEGRAM_CHAT_ID=987654321`}
+            </pre>
+            <p className="mt-1">
+              Keep the token out of the webhook field above: saved settings on this page are not
+              private, and anyone holding the token can control the bot.
+            </p>
           </div>
 
           <div>

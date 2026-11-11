@@ -28,7 +28,9 @@ def send_telegram(bot_token: str, chat_id: str, message: str) -> bool:
         resp = requests.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}, timeout=10)
         return resp.status_code == 200
     except Exception as e:
-        logger.warning("Telegram send failed: %s", e)
+        # The error text quotes the request URL, which contains the bot token.
+        from src.notifications.telegram import redact
+        logger.warning("Telegram send failed: %s", redact(str(e)).replace(bot_token, "[token]"))
         return False
 
 
@@ -227,7 +229,7 @@ def send_email_digest(to_email: str, subject: str, body: str) -> bool:
         msg["From"] = settings.smtp_email
         msg["To"] = to_email
         msg["Subject"] = subject
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
             server.login(settings.smtp_email, settings.smtp_password)
             server.send_message(msg)
         logger.info("Email digest sent to %s", to_email)

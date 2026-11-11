@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     keep_alive_end_et: str = "16:15"         # after the close and the 15:45 auto-trader flatten
     keep_alive_interval_seconds: int = 300   # the host sleeps after 15 idle minutes
 
+    # Telegram alerts (bot over HTTPS; works where outbound email ports are
+    # blocked). Kept in the environment, not in the saved notification
+    # config, because that config is readable through a public endpoint.
+    telegram_bot_token: str = ""   # from @BotFather
+    telegram_chat_id: str = ""     # the chat the bot sends to
+
     # Twilio SMS
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
