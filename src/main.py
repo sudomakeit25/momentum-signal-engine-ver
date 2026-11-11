@@ -644,6 +644,9 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_auto_trade_guard_loop, daemon=True).start()
     # Warm the yfinance cache in a separate thread so startup is not blocked
     threading.Thread(target=_warm_profile_cache_on_startup, daemon=True).start()
+    # Keep a sleep-when-idle host awake through the trading day (no-op locally)
+    from src import keepalive
+    threading.Thread(target=keepalive.run, args=(_stop_event,), daemon=True).start()
     yield
     _stop_event.set()
 

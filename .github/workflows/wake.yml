@@ -1,0 +1,49 @@
+name: Wake backend
+
+# The backend runs on a host that sleeps after 15 idle minutes, and a
+# sleeping service cannot wake itself. This requests it on weekdays so it is
+# awake for the trading day; once awake, the app's own keep-alive loop
+# (src/keepalive.py) holds it awake until 16:15 New York time. The repeat
+# runs are the recovery path after a restart or a missed run.
+#
+# GitHub schedules are in UTC and can start late. The hours below cover
+# 4:00 to 16:00 New York time in both winter and summer; the step itself
+# checks the New York clock so nothing is requested outside that window.
+# GitHub switches schedules off in a repository with no activity for 60
+# days; re-enable it from the Actions tab if that happens.
+
+on:
+  schedule:
+    - cron: "7,37 8-21 * * 1-5"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: wake-backend
+  cancel-in-progress: true
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      BACKEND_URL: https://momentum-signal-engine.onrender.com/health
+    steps:
+      - name: Request the backend inside the New York window
+        run: |
+          # 10# forces base ten: a leading zero would otherwise read as octal.
+          now=$((10#$(TZ=America/New_York date +%H%M)))
+          dow=$(TZ=America/New_York date +%u)
+          echo "New York time ${now}, weekday ${dow}, trigger ${GITHUB_EVENT_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            if [ "${dow}" -gt 5 ] || [ "${now}" -lt 355 ] || [ "${now}" -gt 1610 ]; then
+              echo "Outside 03:55 to 16:10 New York time on a weekday; nothing to do."
+              exit 0
+            fi
+          fi
+          # A cold start takes about a minute, so allow slow answers and retry.
+          curl --fail --silent --show-error --output /dev/null \
+            --max-time 120 --retry 4 --retry-delay 20 --retry-all-errors \
+            --write-out "HTTP %{http_code} in %{time_total}s\n" \
+            "${BACKEND_URL}"

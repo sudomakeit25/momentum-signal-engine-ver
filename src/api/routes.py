@@ -56,6 +56,14 @@ def health_data(probe: bool = Query(default=False)):
             "fmp": fmp_client.status()}
 
 
+@router.get("/health/keepalive")
+def health_keepalive():
+    """Whether the keep-alive loop is running, its window, and when it last
+    reached the service's own address."""
+    from src import keepalive
+    return keepalive.status()
+
+
 @router.get("/scanner/catalyst-watch")
 def scanner_catalyst_watch(
     days_ahead: int = Query(default=5, ge=1, le=10),

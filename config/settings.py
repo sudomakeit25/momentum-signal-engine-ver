@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     auto_trade_last_entry_et: str = "15:30"        # no new entries from this time
     auto_trade_flatten_et: str = "15:45"           # close the bot's positions from this time
 
+    # Keep-alive: a host that sleeps when idle (Render free plan) stops every
+    # background loop. On weekdays inside this New York time window the app
+    # requests its own public address so the host stays awake. It cannot
+    # wake a sleeping host; .github/workflows/wake.yml does that.
+    keep_alive_enabled: bool = True
+    keep_alive_url: str = ""                 # blank = RENDER_EXTERNAL_URL (set by Render); no address = off
+    keep_alive_start_et: str = "04:00"       # pre-market data starts at 4:00
+    keep_alive_end_et: str = "16:15"         # after the close and the 15:45 auto-trader flatten
+    keep_alive_interval_seconds: int = 300   # the host sleeps after 15 idle minutes
+
     # Twilio SMS
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
