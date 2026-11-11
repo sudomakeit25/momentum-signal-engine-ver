@@ -97,26 +97,86 @@ def build_volume_profile(bars_5m: dict[str, pd.DataFrame], today) -> dict[str, d
     return out
 
 
-def ensure_volume_profile(symbols: list[str], now: datetime | None = None) -> bool:
-    """Build today's profile once (one heavy request per day). Returns
-    whether a profile is available."""
-    global _profile, _profile_date
-    today = (now or datetime.now(tz=ET)).astimezone(ET).date()
-    if _profile_date == today.isoformat() and _profile:
-        return True
+_PROFILE_KEY = "mse:volume_profile"
+# Symbols fetched per request while building the profile. Fetching all ~90
+# at once held about 260,000 five-minute bars and took the process from
+# 88 MB to 479 MB, past the host's 512 MB once other scans ran alongside.
+_PROFILE_CHUNK = 8
+_PROFILE_DAYS = 21          # about 15 sessions: a stable median per slot
+_PROFILE_RETRY = 30 * 60    # after a failed build, wait this long before trying again
+_profile_failed_at = 0.0
+
+
+def _load_saved_profile(today_iso: str) -> dict[str, dict[str, float]] | None:
+    """Today's profile from Redis, so a restart does not rebuild it."""
     try:
-        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-        # About 15 sessions: enough for a stable median per slot, and a third
-        # less data to hold in memory than a full month on a small instance.
-        raw = client.get_multi_bars(
-            symbols, timeframe=TimeFrame(5, TimeFrameUnit.Minute), days=21
-        )
-        _profile = build_volume_profile(raw, today)
-        _profile_date = today.isoformat()
-        logger.info("Volume profile built for %d symbols", len(_profile))
+        import json
+        from src.data.redis_store import _get_redis
+        redis = _get_redis()
+        if not redis:
+            return None
+        raw = redis.get(_PROFILE_KEY)
+        if not raw:
+            return None
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, dict) or data.get("date") != today_iso:
+            return None
+        return {str(s): {str(k): float(v) for k, v in slots.items()}
+                for s, slots in (data.get("profile") or {}).items()}
     except Exception as e:
-        logger.warning("Volume profile unavailable: %s", str(e)[:160])
-    return bool(_profile) and _profile_date == today.isoformat()
+        logger.warning("Saved volume profile unreadable: %s", str(e)[:160])
+        return None
+
+
+def _save_profile(today_iso: str, profile: dict[str, dict[str, float]]) -> None:
+    try:
+        import json
+        from src.data.redis_store import _get_redis
+        redis = _get_redis()
+        if redis:
+            redis.set(_PROFILE_KEY, json.dumps({"date": today_iso, "profile": profile}))
+    except Exception as e:
+        logger.warning("Volume profile not saved: %s", str(e)[:160])
+
+
+def ensure_volume_profile(symbols: list[str], now: datetime | None = None) -> bool:
+    """Make today's profile available: from memory, else from Redis, else
+    built a few symbols at a time and saved. Returns whether one exists."""
+    global _profile, _profile_date, _profile_failed_at
+    today = (now or datetime.now(tz=ET)).astimezone(ET).date()
+    today_iso = today.isoformat()
+    if _profile_date == today_iso and _profile:
+        return True
+    saved = _load_saved_profile(today_iso)
+    if saved:
+        _profile, _profile_date = saved, today_iso
+        logger.info("Volume profile loaded for %d symbols", len(saved))
+        return True
+    if time.time() - _profile_failed_at < _PROFILE_RETRY:
+        return False
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    wanted = [s for s in dict.fromkeys(symbols) if _plain(s)]
+    built: dict[str, dict[str, float]] = {}
+    failed = 0
+    for i in range(0, len(wanted), _PROFILE_CHUNK):
+        chunk = wanted[i:i + _PROFILE_CHUNK]
+        try:
+            raw = client.get_multi_bars(
+                chunk, timeframe=TimeFrame(5, TimeFrameUnit.Minute), days=_PROFILE_DAYS
+            )
+            built.update(build_volume_profile(raw, today))
+            del raw
+        except Exception as e:
+            failed += 1
+            logger.warning("Volume profile chunk failed (%s...): %s", chunk[0], str(e)[:160])
+    if not built:
+        _profile_failed_at = time.time()
+        logger.warning("Volume profile unavailable; retrying in %d minutes", _PROFILE_RETRY // 60)
+        return False
+    _profile, _profile_date = built, today_iso
+    _save_profile(today_iso, built)
+    logger.info("Volume profile built for %d symbols (%d chunks failed)", len(built), failed)
+    return True
 
 
 def profile_ready(now: datetime | None = None) -> bool:

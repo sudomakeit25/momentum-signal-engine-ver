@@ -65,6 +65,15 @@ def health_keepalive():
     return keepalive.status()
 
 
+@router.get("/health/memory")
+def health_memory():
+    """Memory in use now and at its peak since the last restart, against the
+    host's limit, with how long each background step last took and what it
+    left in memory, and which optional steps were skipped for lack of room."""
+    from src import heavy
+    return heavy.status()
+
+
 @router.get("/recent-performance/{symbol}")
 def recent_performance_route(
     symbol: str,

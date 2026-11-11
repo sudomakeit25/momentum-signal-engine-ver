@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import settings
+from src import heavy
 from src.api.routes import router, _scan_cache, _SCAN_CACHE_TTL
 
 PORT = int(os.environ.get("PORT", 8000))
@@ -161,16 +162,17 @@ def _refresh_loop():
             # Rebuild universe each cycle so watchlist changes take effect
             symbols = _build_scan_universe()
 
-            # Refresh Alpaca bar data
-            client.get_bars("SPY", days=200)
-            bars_map = client.get_multi_bars(symbols, days=200)
-
-            # Run the scan — pass top_n=None so all qualifying signals can dispatch;
+            # Refresh Alpaca bar data and run the scan, one heavy step at a
+            # time (src/heavy.py) so peaks do not stack past the host's memory.
+            # top_n covers all symbols so every qualifying signal can dispatch;
             # max_price lifted so high-priced names like AVGO aren't excluded.
-            results, bars_map = scan_universe(
-                symbols, top_n=len(symbols), min_price=5.0, max_price=10_000.0,
-                min_volume=500_000, return_bars=True,
-            )
+            with heavy.heavy("daily scan"):
+                client.get_bars("SPY", days=200)
+                bars_map = client.get_multi_bars(symbols, days=200)
+                results, bars_map = scan_universe(
+                    symbols, top_n=len(symbols), min_price=5.0, max_price=10_000.0,
+                    min_volume=500_000, return_bars=True,
+                )
 
             def _enrich(result: ScanResult) -> None:
                 try:
@@ -271,7 +273,8 @@ def _refresh_loop():
             # user never hits a cold load on the Stock Screener page.
             try:
                 from src.scanner.profile_screener import warm_cache
-                warmed = warm_cache()
+                warmed = 0 if heavy.should_skip("profile warmup") else heavy.run(
+                    "profile warmup", warm_cache)
                 if warmed:
                     logger.info("Profile screener cache warmed: %d rows", warmed)
             except Exception as e:
@@ -291,7 +294,7 @@ def _refresh_loop():
             try:
                 prev = _scan_cache.get("cyclicals")
                 stale = (not prev) or (time.time() - prev[0] >= 60 * 60)
-                if stale:
+                if stale and not heavy.should_skip("cyclical scan"):
                     from src.scanner.cyclical import scan_cyclicals, CYCLICAL_CANDIDATES_EXTRA
                     from src.data.redis_store import get_watchlist
                     from alpaca.data.timeframe import TimeFrame as _TF
@@ -306,13 +309,14 @@ def _refresh_loop():
 
                     cyc_fast = []
                     if fast_universe:
-                        cyc_fast = scan_cyclicals(fast_universe)
+                        cyc_fast = heavy.run("cyclical scan", scan_cyclicals, fast_universe)
                         logger.info(
                             "Cyclical fast scan: %d cyclicals from %d symbols",
                             len(cyc_fast), len(fast_universe),
                         )
 
-                    cyc_slow = scan_cyclicals(
+                    cyc_slow = heavy.run(
+                        "cyclical scan (daily)", scan_cyclicals,
                         list(CYCLICAL_CANDIDATES_EXTRA),
                         timeframe=_TF.Day,
                         lookback_days=60,
@@ -344,8 +348,9 @@ def _refresh_loop():
             # after that cache's TTL expires).
             try:
                 from src.scanner.advanced_signals import scan_short_squeeze
-                squeeze = scan_short_squeeze()
-                logger.info("Short squeeze scan: %d candidates", len(squeeze))
+                if not heavy.should_skip("short squeeze"):
+                    squeeze = heavy.run("short squeeze", scan_short_squeeze)
+                    logger.info("Short squeeze scan: %d candidates", len(squeeze))
             except Exception as e:
                 logger.warning("Short squeeze scan failed: %s", e)
 
@@ -354,11 +359,12 @@ def _refresh_loop():
             # cache, so most cycles this returns immediately.
             try:
                 from src.scanner.catalyst_watch import scan_catalyst_watch
-                watch = scan_catalyst_watch()
-                logger.info(
-                    "Catalyst watch: %d upcoming, %d reacting",
-                    len(watch["upcoming"]), len(watch["reacting"]),
-                )
+                if not heavy.should_skip("catalyst watch"):
+                    watch = heavy.run("catalyst watch", scan_catalyst_watch)
+                    logger.info(
+                        "Catalyst watch: %d upcoming, %d reacting",
+                        len(watch["upcoming"]), len(watch["reacting"]),
+                    )
             except Exception as e:
                 logger.warning("Catalyst watch scan failed: %s", e)
 
@@ -369,7 +375,7 @@ def _refresh_loop():
                 from src.scanner import premarket, scorecard as _sc
                 et_now = _dt.now(tz=premarket.ET)
                 if et_now.weekday() < 5 and premarket.PRE_OPEN <= et_now.time() < premarket.CLOSE:
-                    gaps = premarket.scan_premarket_gaps()
+                    gaps = heavy.run("pre-market gaps", premarket.scan_premarket_gaps)
                     if et_now.hour >= 9 and gaps.get("gaps"):
                         _score(_sc, premarket.scorecard_alerts(gaps))
             except Exception as e:
@@ -378,7 +384,8 @@ def _refresh_loop():
             # Fill in what happened after each logged alert (throttled inside).
             try:
                 from src.scanner import scorecard
-                updated = scorecard.refresh_outcomes()
+                updated = 0 if heavy.should_skip("scorecard outcomes") else heavy.run(
+                    "scorecard outcomes", scorecard.refresh_outcomes)
                 if updated:
                     logger.info("Scorecard: %d outcomes updated", updated)
             except Exception as e:
@@ -392,7 +399,9 @@ def _refresh_loop():
 def _warm_profile_cache_on_startup() -> None:
     try:
         from src.scanner.profile_screener import warm_cache
-        rows = warm_cache()
+        if heavy.should_skip("startup profile warmup"):
+            return
+        rows = heavy.run("startup profile warmup", warm_cache)
         logger.info("Startup profile cache warmup: %d rows", rows)
     except Exception as e:
         logger.warning("Startup profile cache warmup failed: %s", e)
@@ -471,7 +480,7 @@ def _intraday_scan_loop():
                 _stop_event.wait(_INTRADAY_INTERVAL)
                 continue
 
-            patterns = scan_intraday_patterns(symbols)
+            patterns = heavy.run("intraday patterns", scan_intraday_patterns, symbols)
             logger.info(
                 "Intraday scan: %d patterns from %d symbols",
                 len(patterns), len(symbols),
@@ -515,7 +524,7 @@ def _intraday_scan_loop():
             # dedup grain (symbol+setup+direction per day) separate from
             # the pattern keys above.
             try:
-                movers = scan_intraday_movers(symbols=symbols)
+                movers = heavy.run("intraday movers", scan_intraday_movers, symbols=symbols)
                 mover_signals = [s for r in movers for s in r.signals]
                 new_setups = [
                     s for s in mover_signals
@@ -589,12 +598,16 @@ def _intraday_scan_loop():
                 watch_universe = list(dict.fromkeys(
                     symbols + spike_reversal.default_universe()
                 ))
-                # Usual-volume profile: 30 days of 5-minute bars, built once a
-                # day, so it is limited to the active intraday universe.
-                spike_reversal.ensure_volume_profile(symbols)
-                spikes = spike_reversal.scan_spikes_reversals(watch_universe)
-                _score(scorecard, spikes["events"])
-                logger.info("Spike watch: %d events", len(spikes["events"]))
+                # Usual-volume profile: about 15 sessions of 5-minute bars,
+                # built once a day a few symbols at a time and saved, so it is
+                # limited to the active intraday universe. Spike Watch sends
+                # no alerts, so it is the first thing dropped when memory is high.
+                if not heavy.should_skip("spike watch"):
+                    heavy.run("volume profile", spike_reversal.ensure_volume_profile, symbols)
+                    spikes = heavy.run("spike watch", spike_reversal.scan_spikes_reversals,
+                                       watch_universe)
+                    _score(scorecard, spikes["events"])
+                    logger.info("Spike watch: %d events", len(spikes["events"]))
             except Exception as e:
                 logger.warning("Spike watch failed: %s", e)
         except Exception as e:

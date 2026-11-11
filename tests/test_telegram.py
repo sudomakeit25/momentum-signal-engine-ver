@@ -230,6 +230,26 @@ class TestFormat:
         assert "entry $123.45 | stop $122.10 | target $126.00 | R:R 1.9" in body
         assert "Range break on volume" in body
 
+    def test_exit_signal_without_levels_is_labelled_not_shown_as_zeros(self):
+        # Seen in the first real Telegram alert on 2026-11-11:
+        # "SELL NOC ... stop $0.00 | target $0.00 | R:R 0.0".
+        exit_sig = Signal(symbol="NOC", action=SignalAction.SELL, setup_type=SetupType.EMA_CROSSOVER,
+                          reason="Price dropped below ATR trailing stop", entry=544.46,
+                          stop_loss=0.0, target=0.0, rr_ratio=0.0, confidence=0.75,
+                          timestamp=datetime(2026, 11, 11, 15, 0, tzinfo=timezone.utc))
+        body = dispatcher._format_telegram_signals([exit_sig, _signal()])
+        assert "$0.00" not in body and "R:R 0.0" not in body
+        assert "SELL NOC  ema crossover  75%  (exit or warning, no trade levels)" in body
+        assert "price $544.46" in body
+        assert "entry $123.45 | stop $122.10 | target $126.00 | R:R 1.9" in body   # trade keeps its levels
+
+    @pytest.mark.parametrize("stop,target,rr", [(0.0, 126.0, 1.9), (122.1, 0.0, 1.9), (122.1, 126.0, 0.0)])
+    def test_any_missing_level_counts_as_no_levels(self, stop, target, rr):
+        s = _signal()
+        s.stop_loss, s.target, s.rr_ratio = stop, target, rr
+        body = dispatcher._format_telegram_signals([s])
+        assert "no trade levels" in body and "$0.00" not in body
+
     def test_delay_label_is_in_the_header(self):
         with dispatcher.alert_label(" (14m delayed)"):
             body = dispatcher._format_telegram_signals([_signal()])

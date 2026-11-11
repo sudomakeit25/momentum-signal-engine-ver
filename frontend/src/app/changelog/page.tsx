@@ -13,6 +13,8 @@ const CHANGELOG = [
       "Recent performance on every chart page: the last 5, 10 or 20 sessions day by day, the same window for peers and the market, and headlines from the biggest days",
       "Auto-trader History: every paper trade the bot made, how it ended (target, stop or end of day close), profit or loss in dollars and in multiples of the risk, with totals by day and by setup",
       "Fixed: a failed text alert could stall the intraday scan for over two minutes",
+      "Fixed: the server ran out of memory and restarted about a dozen times during the session; heavy scans now run one at a time, the Spike Watch volume profile is built in small pieces and saved, and Spike Watch is skipped when memory is tight so alerts and the auto-trader keep running",
+      "Fixed: exit and warning signals in Telegram showed a stop and target of $0.00; they are now labelled as having no trade levels",
       "Known limit: text alerts through the email gateway fail on the current hosting plan, which blocks outbound email; use Telegram",
     ],
   },

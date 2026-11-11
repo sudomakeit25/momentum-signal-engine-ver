@@ -308,8 +308,13 @@ def get_intraday_multi_bars(
                 result[chunk[0]] = df.sort_index()
 
     # Short TTL — pattern scanner runs every ~5 min, but multiple
-    # detectors within a cycle should share the same fetch.
-    _intraday_cache[cache_key] = (_time.time(), result)
+    # detectors within a cycle should share the same fetch. Expired entries
+    # are dropped here: the key is the symbol list, which changes from cycle
+    # to cycle, so without this every cycle's bars stayed in memory all day.
+    now = _time.time()
+    for key in [k for k, (ts, _) in _intraday_cache.items() if now - ts >= _INTRADAY_TTL_SECONDS]:
+        _intraday_cache.pop(key, None)
+    _intraday_cache[cache_key] = (now, result)
     return result
 
 

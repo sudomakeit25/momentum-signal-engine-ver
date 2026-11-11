@@ -200,9 +200,16 @@ def _format_telegram_signals(signals: list, limit: int = 10) -> str:
     lines = ["MSE Alert" + _header_suffix.get()]
     for s in deduped[:limit]:
         setup = s.setup_type.value if hasattr(s.setup_type, "value") else str(s.setup_type)
+        # Exit and warning signals (a trailing stop hit, a bearish divergence)
+        # carry no stop or target; printing them as $0.00 read like a fault.
+        has_levels = (s.stop_loss or 0) > 0 and (s.target or 0) > 0 and (s.rr_ratio or 0) > 0
         lines.append("")
-        lines.append(f"{s.action.value} {s.symbol}  {setup.replace('_', ' ')}  {s.confidence * 100:.0f}%")
-        lines.append(f"entry ${s.entry:.2f} | stop ${s.stop_loss:.2f} | target ${s.target:.2f} | R:R {s.rr_ratio:.1f}")
+        lines.append(f"{s.action.value} {s.symbol}  {setup.replace('_', ' ')}  {s.confidence * 100:.0f}%"
+                     + ("" if has_levels else "  (exit or warning, no trade levels)"))
+        if has_levels:
+            lines.append(f"entry ${s.entry:.2f} | stop ${s.stop_loss:.2f} | target ${s.target:.2f} | R:R {s.rr_ratio:.1f}")
+        else:
+            lines.append(f"price ${s.entry:.2f}")
         if s.reason:
             lines.append(s.reason[:160])
     if len(deduped) > limit:
