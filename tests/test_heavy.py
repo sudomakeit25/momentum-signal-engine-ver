@@ -148,6 +148,64 @@ class TestAllocator:
         assert src.index("heavy.configure_allocator()") < src.index("def lifespan")
 
 
+class TestProfileWarmup:
+    """The Yahoo Finance warm-up held about 110 MB on the 512 MB host (Render
+    step log, 2026-11-11: 115.6 -> 225.3 MB), and Yahoo often refused it."""
+
+    @pytest.fixture
+    def calls(self, monkeypatch):
+        from src.scanner import profile_screener
+        seen = []
+        monkeypatch.setattr(profile_screener, "warm_cache", lambda *a, **k: seen.append(1) or 7)
+        return seen
+
+    def test_off_by_default(self):
+        from config.settings import Settings
+        assert Settings.model_fields["profile_warmup_enabled"].default is False
+
+    def test_startup_warmup_does_nothing_when_off(self, monkeypatch, calls):
+        from src import main
+        monkeypatch.setattr(main.settings, "profile_warmup_enabled", False)
+        main._warm_profile_cache_on_startup()
+        assert calls == [] and "startup profile warmup" not in heavy.status()["steps"]
+
+    def test_startup_warmup_runs_through_the_guard_when_on(self, monkeypatch, calls):
+        from src import main
+        monkeypatch.setattr(main.settings, "profile_warmup_enabled", True)
+        monkeypatch.setattr(heavy, "rss_mb", lambda: 100.0)
+        main._warm_profile_cache_on_startup()
+        assert calls == [1] and "startup profile warmup" in heavy.status()["steps"]
+
+    def test_refresh_loop_warmup_is_behind_the_setting(self):
+        src = inspect.getsource(__import__("src.main", fromlist=["x"])._refresh_loop)
+        assert src.index("if settings.profile_warmup_enabled:") < src.index('"profile warmup", warm_cache')
+
+
+class TestStockScreenerPage:
+    @pytest.fixture
+    def client(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from src.api import routes
+        self.calls = []
+        monkeypatch.setattr(routes, "profile_screen", lambda **k: self.calls.append(k) or [{"ticker": "NVDA"}])
+        app = FastAPI()
+        app.include_router(routes.router)
+        return TestClient(app)
+
+    def test_runs_as_a_heavy_step(self, client, monkeypatch):
+        monkeypatch.setattr(heavy, "rss_mb", lambda: 150.0)
+        body = client.get("/profile-screener/run?sector=semiconductors").json()
+        assert body["count"] == 1 and len(self.calls) == 1
+        assert "stock screener page" in heavy.status()["steps"]
+
+    def test_refused_while_memory_is_high(self, client, monkeypatch):
+        monkeypatch.setattr(heavy, "rss_mb", lambda: 450.0)
+        body = client.get("/profile-screener/run?sector=semiconductors").json()
+        assert self.calls == [] and body["count"] == 0 and body["data_ok"] is False
+        assert "memory" in body["note"]
+
+
 class TestWiring:
     def _src(self, fn):
         from src import main

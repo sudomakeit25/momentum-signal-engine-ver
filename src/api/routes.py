@@ -3140,8 +3140,18 @@ def profile_screener_run(
     min_cap: float | None = Query(default=None, description="Raw market cap (e.g. 5e9)"),
     custom: str = Query(default=""),
 ):
-    """Run the profile screener with fundamental + momentum filters."""
-    results = profile_screen(
+    """Run the profile screener with fundamental + momentum filters.
+
+    A cold Yahoo Finance load holds about 110 MB, so it runs as a heavy step
+    (one at a time with the background scans) and is refused while memory
+    is already high, rather than risk the host's 512 MB limit."""
+    from src import heavy
+    if heavy.should_skip("stock screener page"):
+        return {"results": [], "count": 0, "sector": sector, "data_ok": False,
+                "stale_minutes": 0,
+                "note": "The server is short of memory right now; try again in a few minutes."}
+    results = heavy.run(
+        "stock screener page", profile_screen,
         sector=sector,
         max_fwd_pe=max_fwd_pe,
         min_momentum_6m=min_momentum,

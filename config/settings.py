@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     keep_alive_end_et: str = "16:15"         # after the close and the 15:45 auto-trader flatten
     keep_alive_interval_seconds: int = 300   # the host sleeps after 15 idle minutes
 
+    # Pre-load the Stock Screener page's Yahoo Finance data at startup and on
+    # every refresh cycle. Off: on the 512 MB host it held about 110 MB, and
+    # Yahoo often refuses the host anyway. The page still loads on demand.
+    profile_warmup_enabled: bool = False
+
     # Telegram alerts (bot over HTTPS; works where outbound email ports are
     # blocked). Kept in the environment, not in the saved notification
     # config, because that config is readable through a public endpoint.

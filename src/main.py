@@ -274,13 +274,15 @@ def _refresh_loop():
             )
 
             # Warm the profile-screener (yfinance) cache for hot sectors so the
-            # user never hits a cold load on the Stock Screener page.
+            # user never hits a cold load on the Stock Screener page. Off by
+            # default (PROFILE_WARMUP_ENABLED): it held ~110 MB on the host.
             try:
-                from src.scanner.profile_screener import warm_cache
-                warmed = 0 if heavy.should_skip("profile warmup") else heavy.run(
-                    "profile warmup", warm_cache)
-                if warmed:
-                    logger.info("Profile screener cache warmed: %d rows", warmed)
+                if settings.profile_warmup_enabled:
+                    from src.scanner.profile_screener import warm_cache
+                    warmed = 0 if heavy.should_skip("profile warmup") else heavy.run(
+                        "profile warmup", warm_cache)
+                    if warmed:
+                        logger.info("Profile screener cache warmed: %d rows", warmed)
             except Exception as e:
                 logger.debug("Profile screener warmup failed: %s", e)
 
@@ -401,6 +403,10 @@ def _refresh_loop():
 
 
 def _warm_profile_cache_on_startup() -> None:
+    if not settings.profile_warmup_enabled:
+        logger.info("Startup profile cache warmup off (PROFILE_WARMUP_ENABLED); "
+                    "the Stock Screener loads on demand")
+        return
     try:
         from src.scanner.profile_screener import warm_cache
         if heavy.should_skip("startup profile warmup"):
