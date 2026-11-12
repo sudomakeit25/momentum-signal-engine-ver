@@ -15,6 +15,8 @@ const CHANGELOG = [
       "Telegram morning check at 9:25 AM New York time on trading days: server memory, data delay, auto-trader state and whether alerts are on, so a server that is down gets noticed before the open",
       "Telegram notice when the server restarts during the day, saying whether it was a deploy, an unexpected restart or a wake after being down",
       "Alert settings are locked: changing them or sending test messages needs the settings key (SETTINGS_KEY on the server); the saved phone number and webhook address are shown partly hidden and are no longer written to the server logs",
+      "Fixed: intraday pattern alerts were built mostly from pre-market bars just after the open, and a single stray trade could create a fake reversal (AMD got a buy and a sell 7 minutes apart on Nov 11); patterns now use regular-session bars only, ignore one-trade highs and lows, and a buy and a sell on the same stock within an hour are not both sent",
+      "Fixed: when Nasdaq's earnings calendar was down, the backup check judged upcoming reports by the server's UTC clock, which is already tomorrow from 7 PM New York time",
       "Fixed: a failed text alert could stall the intraday scan for over two minutes",
       "Fixed: the server ran out of memory and restarted about a dozen times during the session; heavy scans now run one at a time, the Spike Watch volume profile is built in small pieces and saved, and Spike Watch is skipped when memory is tight so alerts and the auto-trader keep running",
       "Fixed: exit and warning signals in Telegram showed a stop and target of $0.00; they are now labelled as having no trade levels",

@@ -185,15 +185,19 @@ def get_earnings_calendar(days_ahead: int = 14) -> list[dict]:
 _symbol_refused: dict[str, str] = {}
 
 
-def get_symbol_next_earnings(symbol: str) -> tuple[bool, str | None]:
+def get_symbol_next_earnings(symbol: str, today: str | None = None) -> tuple[bool, str | None]:
     """(known, next earnings date) for one symbol.
 
     known is False when FMP could not answer for this symbol: no key, rate
     limit, network error, or a plan that does not cover the symbol. The date
-    is the earliest not-yet-reported earnings date from today on, or None.
+    is the earliest not-yet-reported earnings date from `today` on, or None.
+    `today` defaults to the New York date: the host's clock is UTC, which is
+    already tomorrow from 7 PM New York time.
     """
     symbol = symbol.upper()
-    today = datetime.now().strftime("%Y-%m-%d")
+    if today is None:
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     if _symbol_refused.get(symbol) == today:
         return False, None
     data = _get_stable(

@@ -213,6 +213,28 @@ class TestFmpSymbolEarnings:
         route(monkeypatch, fmp_handler=lambda u, p: Resp(body=[]))
         assert fmp.get_symbol_next_earnings("NVDA") == (True, None)
 
+    def test_upcoming_is_judged_from_the_given_day_not_the_clock(self, monkeypatch):
+        # Found on 2026-11-12: the fallback used the machine's clock, so a
+        # check for 2026-11-10 missed a 2026-11-11 report once the date rolled.
+        route(monkeypatch, fmp_handler=lambda u, p: Resp(body=[
+            {"date": "2026-11-11", "epsActual": None}, {"date": "2027-02-04", "epsActual": None}]))
+        assert fmp.get_symbol_next_earnings("NVDA", today="2026-11-10") == (True, "2026-11-11")
+        assert fmp.get_symbol_next_earnings("NVDA", today="2026-11-12") == (True, "2027-02-04")
+
+    def test_default_day_is_new_york_not_utc(self, monkeypatch):
+        from datetime import datetime as real_dt, timezone as tz
+
+        class LateEvening(real_dt):
+            @classmethod
+            def now(cls, tzinfo=None):
+                # 20:30 New York on Nov 11 is already Nov 12 in UTC.
+                t = real_dt(2026, 11, 12, 1, 30, tzinfo=tz.utc)
+                return t.astimezone(tzinfo) if tzinfo else t.replace(tzinfo=None)
+
+        monkeypatch.setattr(fmp, "datetime", LateEvening)
+        route(monkeypatch, fmp_handler=lambda u, p: Resp(body=[{"date": "2026-11-11", "epsActual": None}]))
+        assert fmp.get_symbol_next_earnings("AMC") == (True, "2026-11-11")
+
     def test_plan_refusal_is_remembered_for_the_day(self, monkeypatch):
         calls = route(monkeypatch, fmp_handler=lambda u, p: Resp(
             402, body={"Error Message": "not available under your current subscription"}))

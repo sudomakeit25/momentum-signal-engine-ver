@@ -154,7 +154,9 @@ def test_scan_returns_one_pattern_per_symbol(monkeypatch):
         lambda symbols, **kw: {s: fake_bars[s] for s in symbols if s in fake_bars},
     )
 
-    out = ip.scan_intraday_patterns(["CLSK", "FLAT"])
+    # The fixture's bars are 18:00-18:55 UTC on 2026-04-23 (14:00 New York):
+    # the scan judges that day's regular session.
+    out = ip.scan_intraday_patterns(["CLSK", "FLAT"], now=datetime(2026, 4, 23, 19, 0, tzinfo=timezone.utc))
     assert len(out) == 1
     assert out[0].symbol == "CLSK"
     assert out[0].pattern_type == "v_reversal"

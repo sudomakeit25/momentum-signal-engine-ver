@@ -435,7 +435,7 @@ def _intraday_scan_loop():
         save_intraday_seen,
         save_intraday_latest,
     )
-    from src.scanner.intraday_patterns import scan_intraday_patterns
+    from src.scanner.intraday_patterns import drop_conflicts, mark_sent, scan_intraday_patterns
     from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
     from src.scanner import scorecard, spike_reversal
     from src.trading import auto_trader
@@ -510,6 +510,17 @@ def _intraday_scan_loop():
                 p for p in patterns
                 if f"{p.symbol}:{p.pattern_type}" not in seen_keys
             ]
+            # No buy and sell on the same stock within the hour (AMD on
+            # 2026-11-11 got a V-reversal BUY and an inverted-V SELL 7 minutes
+            # apart). Held patterns stay on the scorecard; only the alert is
+            # withheld, and they are marked seen so they do not fire later.
+            new_patterns, held = drop_conflicts(new_patterns, seen_keys, time.time())
+            if held:
+                logger.info(
+                    "Held back %d patterns that contradict one sent within the hour: %s",
+                    len(held), ", ".join(f"{p.symbol} {p.pattern_type}" for p in held),
+                )
+            mark_sent(new_patterns, seen_keys, time.time())
             if new_patterns:
                 logger.info("Dispatching %d new intraday patterns", len(new_patterns))
                 try:

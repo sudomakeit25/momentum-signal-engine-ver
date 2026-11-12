@@ -197,8 +197,12 @@ def _fmp_lookup(symbols: list[str], days: set[str]) -> tuple[set[str], set[str]]
 
     reporting: set[str] = set()
     known: set[str] = set()
+    # "Upcoming" is judged from the caller's first day, not the machine's
+    # clock: the test for 2026-11-10 started failing on 2026-11-12, and the
+    # host's UTC clock moves to tomorrow at 7 PM New York time.
+    start = min(days) if days else None
     for sym in symbols[:_MAX_FMP_FALLBACK]:
-        ok, next_date = fmp_client.get_symbol_next_earnings(sym)
+        ok, next_date = fmp_client.get_symbol_next_earnings(sym, today=start)
         if not ok:
             continue
         known.add(sym)

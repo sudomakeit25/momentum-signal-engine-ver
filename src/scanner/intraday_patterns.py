@@ -44,6 +44,18 @@ DEFAULT_MIN_RECOVERY_FRAC = 0.3    # V/inverted-V: recovered >= 30% of move
 DEFAULT_MIN_BARS_AFTER_EXTREME = 2 # fire after the V is actually forming
 DEFAULT_BREAKDOWN_FOLLOWTHROUGH = 0.0  # sustained: still within 1/3 of the extreme
 
+# A high or low made by one stray trade is not a real turning point. On
+# 2026-11-11 a single pre-market AMD print at 516.50 (the bar opened near 545
+# and closed at 543.92, on 20,000 shares) produced a V-reversal BUY at 09:50
+# and an inverted-V SELL at 09:57. An extreme counts only when the market
+# traded near it: the bar closed within CLOSE_FRAC of the move from it, or a
+# neighbouring bar reached within NEIGHBOUR_FRAC of the move.
+EXTREME_CLOSE_FRAC = 0.5
+EXTREME_NEIGHBOUR_FRAC = 0.3
+
+# Opposite patterns on the same stock within this long are not both sent.
+CONFLICT_WINDOW_SECONDS = 60 * 60
+
 
 @dataclass
 class IntradayPattern:
@@ -75,6 +87,85 @@ def _trim_window(df: pd.DataFrame, window_minutes: int, timeframe_minutes: int) 
     """Keep only the most recent N bars."""
     bars_in_window = max(window_minutes // timeframe_minutes, 4)
     return df.tail(bars_in_window)
+
+
+def _real_low(df: pd.DataFrame, idx: int, move: float) -> bool:
+    """True when the low of bar `idx` is a real low, not one stray trade."""
+    if move <= 0:
+        return False
+    low = float(df.iloc[idx]["low"])
+    if float(df.iloc[idx]["close"]) - low <= move * EXTREME_CLOSE_FRAC:
+        return True
+    return any(0 <= j < len(df) and float(df.iloc[j]["low"]) - low <= move * EXTREME_NEIGHBOUR_FRAC
+               for j in (idx - 1, idx + 1))
+
+
+def _real_high(df: pd.DataFrame, idx: int, move: float) -> bool:
+    """True when the high of bar `idx` is a real high, not one stray trade."""
+    if move <= 0:
+        return False
+    high = float(df.iloc[idx]["high"])
+    if high - float(df.iloc[idx]["close"]) <= move * EXTREME_CLOSE_FRAC:
+        return True
+    return any(0 <= j < len(df) and high - float(df.iloc[j]["high"]) <= move * EXTREME_NEIGHBOUR_FRAC
+               for j in (idx - 1, idx + 1))
+
+
+def session_window(df: pd.DataFrame, window_minutes: int = DEFAULT_WINDOW_MINUTES,
+                   timeframe_minutes: int = DEFAULT_TIMEFRAME_MINUTES,
+                   now: datetime | None = None) -> pd.DataFrame:
+    """The detection window: today's regular-session bars only (from 09:30
+    New York time), most recent N. Pre-market bars are thin and full of
+    stray prints; just after the open they used to fill almost the whole
+    90-minute window."""
+    from src.scanner.intraday_movers import session_bars
+    return _trim_window(session_bars(df, now=now), window_minutes, timeframe_minutes)
+
+
+def pattern_direction(pattern_type: str) -> str:
+    return "down" if pattern_type in ("inverted_v", "breakdown") else "up"
+
+
+def _conflict_marks(seen_keys, now_ts: float, window: float) -> dict[str, set[str]]:
+    """{symbol: directions sent within `window` seconds}, read from the
+    "T:{symbol}:{direction}:{epoch}" marks kept in the day's seen set."""
+    out: dict[str, set[str]] = {}
+    for key in seen_keys:
+        if not key.startswith("T:"):
+            continue
+        try:
+            _, sym, direction, ts = key.split(":")
+            if 0 <= now_ts - float(ts) < window:
+                out.setdefault(sym, set()).add(direction)
+        except ValueError:
+            continue
+    return out
+
+
+def drop_conflicts(patterns: list, seen_keys, now_ts: float,
+                   window: float = CONFLICT_WINDOW_SECONDS) -> tuple[list, list]:
+    """(to send, held back). A pattern is held back when a pattern in the
+    opposite direction on the same stock was sent within `window` seconds,
+    or when the batch itself holds both directions for a stock."""
+    recent = _conflict_marks(seen_keys, now_ts, window)
+    batch: dict[str, set[str]] = {}
+    for p in patterns:
+        batch.setdefault(p.symbol, set()).add(pattern_direction(p.pattern_type))
+    send, held = [], []
+    for p in patterns:
+        d = pattern_direction(p.pattern_type)
+        opposite = "down" if d == "up" else "up"
+        if opposite in recent.get(p.symbol, set()) or opposite in batch[p.symbol]:
+            held.append(p)
+        else:
+            send.append(p)
+    return send, held
+
+
+def mark_sent(patterns: list, seen_keys: set, now_ts: float) -> None:
+    """Remember the direction and time of each sent pattern for drop_conflicts."""
+    for p in patterns:
+        seen_keys.add(f"T:{p.symbol}:{pattern_direction(p.pattern_type)}:{int(now_ts)}")
 
 
 def _volume_split(df: pd.DataFrame, pivot_idx: int) -> tuple[float, float]:
@@ -118,6 +209,9 @@ def detect_v_reversal(
     drop_amount = pre_high - extreme_price
     if drop_amount <= 0:
         return None
+    pre_high_idx = int(df.iloc[:low_idx + 1]["high"].values.argmax())
+    if not (_real_low(df, low_idx, drop_amount) and _real_high(df, pre_high_idx, drop_amount)):
+        return None   # the drop runs to or from a single stray trade
     recovery_amount = last_close - extreme_price
     recovery_frac = recovery_amount / drop_amount
     if recovery_frac < min_recovery_frac:
@@ -168,6 +262,9 @@ def detect_inverted_v(
     rally_amount = extreme_price - pre_low
     if rally_amount <= 0:
         return None
+    pre_low_idx = int(df.iloc[:high_idx + 1]["low"].values.argmin())
+    if not (_real_high(df, high_idx, rally_amount) and _real_low(df, pre_low_idx, rally_amount)):
+        return None   # the rally runs to or from a single stray trade
     fade_amount = extreme_price - last_close
     fade_frac = fade_amount / rally_amount
     if fade_frac < min_fade_frac:
@@ -224,7 +321,9 @@ def detect_sustained_move(
             move_pct = (window_low - window_high) / window_high * 100  # negative
             if abs(move_pct) >= min_move_pct:
                 drop_amount = window_high - window_low
-                if drop_amount > 0:
+                low_at = int(df["low"].values.argmin())
+                if drop_amount > 0 and _real_high(df, high_idx, drop_amount) \
+                        and _real_low(df, low_at, drop_amount):
                     recovery_amount = last_close - window_low
                     recovery_frac = recovery_amount / drop_amount
                     if recovery_frac <= max_recovery_frac:
@@ -252,7 +351,9 @@ def detect_sustained_move(
             move_pct = (window_high - window_low) / window_low * 100
             if move_pct >= min_move_pct:
                 rally_amount = window_high - window_low
-                if rally_amount > 0:
+                high_at = int(df["high"].values.argmax())
+                if rally_amount > 0 and _real_low(df, low_idx, rally_amount) \
+                        and _real_high(df, high_at, rally_amount):
                     pullback_amount = window_high - last_close
                     pullback_frac = pullback_amount / rally_amount
                     if pullback_frac <= max_recovery_frac:
@@ -281,12 +382,14 @@ def scan_intraday_patterns(
     *,
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
     timeframe_minutes: int = DEFAULT_TIMEFRAME_MINUTES,
+    now: datetime | None = None,
 ) -> list[IntradayPattern]:
     """Run all detectors over the given symbols. Returns at most one
     pattern per symbol — the first detector that fires wins, with the
     pattern types tried in priority order (V > inverted-V > sustained).
     Volume-confirmed patterns are kept; unconfirmed ones are dropped to
-    cut noise.
+    cut noise. Only today's regular-session bars are judged (`now` picks
+    the day; it is for tests and replays).
     """
     if not symbols:
         return []
@@ -302,9 +405,9 @@ def scan_intraday_patterns(
         df = bars_map.get(symbol)
         if df is None or df.empty:
             continue
-        df = _trim_window(df, window_minutes, timeframe_minutes)
+        df = session_window(df, window_minutes, timeframe_minutes, now=now)
         if len(df) < 6:
-            continue
+            continue          # under 30 minutes of session data: nothing to judge yet
         for fn in _DETECTORS:
             try:
                 pattern = fn(df, symbol)
