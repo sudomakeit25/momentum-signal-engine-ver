@@ -23,6 +23,28 @@ _FINRA_SI_API = "https://api.finra.org/data/group/otcMarket/name/consolidatedSho
 _HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 
+def _aggregate_short_volume(result: dict[str, dict], rows: list[dict]) -> None:
+    """Add one page of FINRA rows to `result`, summing a symbol's rows across
+    reporting facilities."""
+    for row in rows:
+        symbol = row.get("securitiesInformationProcessorSymbolIdentifier", "")
+        if not symbol:
+            continue
+        short_vol = int(row.get("shortParQuantity", 0))
+        short_exempt = int(row.get("shortExemptParQuantity", 0))
+        total_vol = int(row.get("totalParQuantity", 0))
+        if symbol in result:
+            result[symbol]["short_volume"] += short_vol
+            result[symbol]["short_exempt_volume"] += short_exempt
+            result[symbol]["total_volume"] += total_vol
+        else:
+            result[symbol] = {
+                "short_volume": short_vol,
+                "short_exempt_volume": short_exempt,
+                "total_volume": total_vol,
+            }
+
+
 def _fetch_daily_report(date: datetime) -> dict[str, dict]:
     """Fetch FINRA short volume report for a given date.
 
@@ -36,8 +58,10 @@ def _fetch_daily_report(date: datetime) -> dict[str, dict]:
         return cached
 
     # FINRA API requires tradeReportDate as partition key
-    # Fetch all symbols for this date (paginate with offset)
-    all_rows = []
+    # Fetch all symbols for this date (paginate with offset). Each page is
+    # folded into the result as it arrives rather than collected first, so
+    # the raw rows of a whole report are never held at once.
+    result: dict[str, dict] = {}
     offset = 0
     limit = 5000
 
@@ -68,34 +92,15 @@ def _fetch_daily_report(date: datetime) -> dict[str, dict]:
             rows = resp.json()
             if not rows:
                 break
-            all_rows.extend(rows)
-            if len(rows) < limit:
+            _aggregate_short_volume(result, rows)
+            n = len(rows)
+            del rows
+            if n < limit:
                 break
             offset += limit
         except Exception as e:
             logger.warning("FINRA API error for %s: %s", date_str, e)
             break
-
-    # Aggregate across reporting facilities per symbol
-    result: dict[str, dict] = {}
-    for row in all_rows:
-        symbol = row.get("securitiesInformationProcessorSymbolIdentifier", "")
-        if not symbol:
-            continue
-        short_vol = int(row.get("shortParQuantity", 0))
-        short_exempt = int(row.get("shortExemptParQuantity", 0))
-        total_vol = int(row.get("totalParQuantity", 0))
-
-        if symbol in result:
-            result[symbol]["short_volume"] += short_vol
-            result[symbol]["short_exempt_volume"] += short_exempt
-            result[symbol]["total_volume"] += total_vol
-        else:
-            result[symbol] = {
-                "short_volume": short_vol,
-                "short_exempt_volume": short_exempt,
-                "total_volume": total_vol,
-            }
 
     if result:
         _cache.set(cache_key, result)
@@ -277,46 +282,51 @@ def get_short_volume_batch(symbols: list[str], days: int = 20) -> dict[str, list
 
     Fetches daily reports once and extracts data for all symbols.
     """
-    cache_key = f"finra_batch_{len(symbols)}_{days}"
+    # The key names the symbols themselves: it used to be only their count,
+    # so two different lists of the same length shared one cached answer.
+    import hashlib
+    names = ",".join(sorted({s.upper() for s in symbols}))
+    cache_key = f"finra_batch_{hashlib.sha1(names.encode()).hexdigest()[:16]}_{days}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
 
-    daily_reports = []
+    # Each daily report covers about 15,000 symbols. Keep only the requested
+    # symbols from a report and drop it before fetching the next: holding
+    # every report at once took the host up by about 150 MB on 2026-11-11.
+    newest_first: dict[str, list[dict]] = {}
+    found = 0
     date = datetime.now()
     attempts = 0
     max_attempts = days * 2
 
-    while len(daily_reports) < days and attempts < max_attempts:
+    while found < days and attempts < max_attempts:
         date -= timedelta(days=1)
         attempts += 1
         if date.weekday() >= 5:
             continue
 
         report = _fetch_daily_report(date)
-        if report:
-            daily_reports.append((date, report))
+        if not report:
+            continue
+        found += 1
+        for symbol in dict.fromkeys(symbols):
+            data = report.get(symbol.upper())
+            if data is None:
+                continue
+            total = data["total_volume"]
+            short = data["short_volume"]
+            newest_first.setdefault(symbol, []).append({
+                "date": date.isoformat(),
+                "short_volume": short,
+                "short_exempt_volume": data["short_exempt_volume"],
+                "total_volume": total,
+                "short_pct": round(short / total * 100, 2) if total > 0 else 0,
+            })
+        del report
 
-    daily_reports.reverse()
-
-    result = {}
-    for symbol in symbols:
-        sym_upper = symbol.upper()
-        entries = []
-        for report_date, report in daily_reports:
-            if sym_upper in report:
-                data = report[sym_upper]
-                total = data["total_volume"]
-                short = data["short_volume"]
-                entries.append({
-                    "date": report_date.isoformat(),
-                    "short_volume": short,
-                    "short_exempt_volume": data["short_exempt_volume"],
-                    "total_volume": total,
-                    "short_pct": round(short / total * 100, 2) if total > 0 else 0,
-                })
-        if entries:
-            result[symbol] = entries
+    # Oldest first, as before.
+    result = {s: entries[::-1] for s, entries in newest_first.items() if entries}
 
     if result:
         _cache.set(cache_key, result)
