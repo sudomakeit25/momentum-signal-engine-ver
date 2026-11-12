@@ -186,12 +186,12 @@ class TestTokenNeverLeaks:
         assert s["last_error"] and "[token]" in s["last_error"]
         assert TOKEN not in str(s) and CHAT not in str(s)
 
-    def test_not_in_logs(self, monkeypatch, caplog):
+    def test_not_in_logs(self, monkeypatch, mse_logs):
         _post(monkeypatch, self._leaky())
-        with caplog.at_level("DEBUG"):
-            telegram.send_text("hello")
-            dispatcher._send_telegram("signals", "body")
-        assert TOKEN not in caplog.text and "AAExample" not in caplog.text
+        telegram.send_text("hello")
+        dispatcher._send_telegram("signals", "body")
+        assert "Telegram alert failed" in mse_logs.text           # the log was really captured
+        assert TOKEN not in mse_logs.text and "AAExample" not in mse_logs.text
 
     def test_redacts_a_token_that_is_not_the_configured_one(self):
         other = "55555555:BBsomeOtherTokenValue_0123456789"
@@ -205,16 +205,16 @@ class TestTokenNeverLeaks:
         s = telegram.status()
         assert s["configured"] is False and s["has_token"] is True and s["has_chat_id"] is False
 
-    def test_old_helper_redacts_too(self, monkeypatch, caplog):
+    def test_old_helper_redacts_too(self, monkeypatch, mse_logs):
         from src.notifications import channels
 
         def boom(*a, **k):
             raise self._leaky()
 
         monkeypatch.setattr(channels.requests, "post", boom)
-        with caplog.at_level("DEBUG"):
-            assert channels.send_telegram(TOKEN, CHAT, "hi") is False
-        assert TOKEN not in caplog.text
+        assert channels.send_telegram(TOKEN, CHAT, "hi") is False
+        assert "Telegram send failed" in mse_logs.text            # the log was really captured
+        assert TOKEN not in mse_logs.text
 
     def test_notification_config_has_no_telegram_secret_fields(self):
         # The saved config is served by a public endpoint.

@@ -74,6 +74,18 @@ class Settings(BaseSettings):
     # Yahoo often refuses the host anyway. The page still loads on demand.
     profile_warmup_enabled: bool = False
 
+    # Telegram status messages (sent only when Telegram is set up):
+    # a morning check before the open, and a notice when the server restarts
+    # while it is supposed to be awake (weekdays inside the keep-alive window).
+    heartbeat_enabled: bool = True
+    heartbeat_et: str = "09:25"             # New York time, weekdays that are trading days
+    restart_notice_enabled: bool = True
+
+    # Secret (16+ characters) needed to change alert settings or send test
+    # messages through the API. Without it those requests are refused, and the
+    # saved phone number and webhook address are shown only partly.
+    settings_key: str = ""
+
     # Telegram alerts (bot over HTTPS; works where outbound email ports are
     # blocked). Kept in the environment, not in the saved notification
     # config, because that config is readable through a public endpoint.

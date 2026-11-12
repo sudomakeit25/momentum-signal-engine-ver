@@ -190,6 +190,12 @@ def send_expo_push_intraday(tokens: list[str], patterns: list) -> bool:
 _SMTP_TIMEOUT = 15  # seconds; without one a blocked mail port stalls the scan loop for minutes
 
 
+def _redact_phone(value: str) -> str:
+    """For logs: whether a number is set, and its last two digits only."""
+    digits = "".join(c for c in (value or "") if c.isdigit())
+    return f"set (ends {digits[-2:]})" if digits else "none"
+
+
 def _format_telegram_signals(signals: list, limit: int = 10) -> str:
     """Telegram body for trade signals. No 160-character cap, so each signal
     carries its levels: entry, stop, target, reward to risk, and the reason."""
@@ -784,7 +790,7 @@ def send_email_sms(to_phone: str, carrier: str, signals: list) -> bool:
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     if len(digits) != 10:
-        logger.warning("Email SMS skipped: invalid phone number '%s'", to_phone)
+        logger.warning("Email SMS skipped: invalid phone number (%s)", _redact_phone(to_phone))
         return False
 
     to_addr = f"{digits}@{gateway}"
@@ -809,7 +815,7 @@ def send_email_sms(to_phone: str, carrier: str, signals: list) -> bool:
             server.send_message(msg)
 
         _record_sms_fingerprint(fp)
-        logger.info("Email SMS sent to %s via %s (%d chars)", to_addr, carrier, len(body))
+        logger.info("Email SMS sent to %s via %s (%d chars)", _redact_phone(to_addr), carrier, len(body))
         return True
     except Exception as e:
         logger.warning("Email SMS error: %s", e)
@@ -845,7 +851,7 @@ def send_sms(to_phone: str, signals: list) -> bool:
         )
 
         _record_sms_fingerprint(fp)
-        logger.info("SMS sent to %s: SID %s", to_phone, message.sid)
+        logger.info("SMS sent to %s: SID %s", _redact_phone(to_phone), message.sid)
         return True
     except Exception as e:
         logger.warning("SMS error: %s", e)
@@ -857,11 +863,13 @@ def dispatch_alerts(signals: list) -> dict:
     config = load_config()
     results = {"webhook": False, "sms": False, "push": False, "telegram": False}
 
+    # The phone number and webhook address (which can hold a bot token) are
+    # not written to the logs.
     logger.info(
-        "dispatch_alerts called: %d signals, auto_enabled=%s, sms_to=%s, sms_consent=%s, sms_method=%s, sms_carrier=%s, webhook_url=%s",
-        len(signals), config.auto_alerts_enabled, config.sms_to,
+        "dispatch_alerts called: %d signals, auto_enabled=%s, sms_to=%s, sms_consent=%s, sms_method=%s, sms_carrier=%s, webhook=%s",
+        len(signals), config.auto_alerts_enabled, _redact_phone(config.sms_to),
         config.sms_consent, config.sms_method, config.sms_carrier,
-        config.webhook_url[:30] + "..." if config.webhook_url else "",
+        "set" if config.webhook_url else "none",
     )
 
     if not config.auto_alerts_enabled:

@@ -677,6 +677,9 @@ async def lifespan(app: FastAPI):
     # Keep a sleep-when-idle host awake through the trading day (no-op locally)
     from src import keepalive
     threading.Thread(target=keepalive.run, args=(_stop_event,), daemon=True).start()
+    # Telegram status: restart notice at startup, morning check before the open
+    from src.notifications import heartbeat
+    threading.Thread(target=heartbeat.run, args=(_stop_event,), daemon=True).start()
     yield
     _stop_event.set()
 

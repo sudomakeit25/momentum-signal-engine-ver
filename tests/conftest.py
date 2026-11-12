@@ -8,6 +8,28 @@ Telegram set their own fake credentials and a fake HTTP client.
 import pytest
 
 
+@pytest.fixture
+def mse_logs(caplog):
+    """caplog for the app's own loggers. src/main.py stops "mse" and
+    "mse.notifications" from propagating to the root logger, where caplog
+    listens, so without this a test that checks something is NOT logged
+    passes without seeing any log at all. Pair every absence check with a
+    presence check."""
+    import logging
+    loggers = [logging.getLogger(n) for n in ("mse", "mse.notifications")]
+    levels = [lg.level for lg in loggers]
+    for lg in loggers:
+        lg.addHandler(caplog.handler)
+        lg.setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+    try:
+        yield caplog
+    finally:
+        for lg, level in zip(loggers, levels):
+            lg.removeHandler(caplog.handler)
+            lg.setLevel(level)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_telegram(monkeypatch):
     from config.settings import settings

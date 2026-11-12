@@ -75,8 +75,21 @@ export default function NotificationsPage() {
   const [loaded, setLoaded] = useState(false);
   const [telegram, setTelegram] = useState<TelegramStatus | null>(null);
   const [tgTestStatus, setTgTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  // The server's SETTINGS_KEY. Kept only in this page's memory, never stored.
+  const [settingsKey, setSettingsKey] = useState("");
+  const [masked, setMasked] = useState(false);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const keyHeaders = (): Record<string, string> =>
+    settingsKey ? { "X-Settings-Key": settingsKey } : {};
+
+  // A 403 means the settings key is missing or wrong; show the server's reason.
+  const refused = (res: Response, data: { detail?: string }) => {
+    if (res.status !== 403) return false;
+    say(data?.detail || "Enter the settings key to do this.", false);
+    return true;
+  };
 
   const loadTelegram = () =>
     fetch(`${apiBase}/notifications/telegram/status`)
@@ -108,9 +121,11 @@ export default function NotificationsPage() {
     loadTelegram();
   };
 
-  // Load config from backend on mount
-  useEffect(() => {
-    fetch(`${apiBase}/notifications/config`)
+  // Load config from the backend. Without the settings key the phone number
+  // and webhook address come back partly hidden; saving them unchanged keeps
+  // the saved values.
+  const loadConfig = (headers: Record<string, string> = {}) =>
+    fetch(`${apiBase}/notifications/config`, { headers })
       .then((r) => r.json())
       .then((data) => {
         setConfig({
@@ -124,10 +139,26 @@ export default function NotificationsPage() {
           auto_alerts_enabled: data.auto_alerts_enabled || false,
           min_confidence: data.min_confidence ?? 0.6,
         });
+        setMasked(Boolean(data.masked));
         setLoaded(true);
+        return Boolean(data.masked);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => {
+        setLoaded(true);
+        return true;
+      });
+
+  useEffect(() => {
+    loadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase]);
+
+  const unlock = async () => {
+    if (!settingsKey) return;
+    const stillMasked = await loadConfig(keyHeaders());
+    if (stillMasked) say("That settings key was not accepted.", false);
+    else say("Settings unlocked for this visit.", true);
+  };
 
   const saveConfig = async () => {
     setSaveStatus("saving");
@@ -142,9 +173,14 @@ export default function NotificationsPage() {
         auto_alerts_enabled: String(config.auto_alerts_enabled),
         min_confidence: String(config.min_confidence),
       });
-      const res = await fetch(`${apiBase}/notifications/config?${params}`, { method: "POST" });
+      const res = await fetch(`${apiBase}/notifications/config?${params}`, {
+        method: "POST",
+        headers: keyHeaders(),
+      });
       const data = await res.json();
-      if (data.status === "saved") {
+      if (refused(res, data)) {
+        setSaveStatus("error");
+      } else if (data.status === "saved") {
         setSaveStatus("saved");
         say("Configuration saved!", true);
         setTimeout(() => setSaveStatus("idle"), 2000);
@@ -164,10 +200,12 @@ export default function NotificationsPage() {
     try {
       const res = await fetch(
         `${apiBase}/webhook/test?url=${encodeURIComponent(config.webhook_url)}&platform=${config.webhook_platform}`,
-        { method: "POST" }
+        { method: "POST", headers: keyHeaders() }
       );
       const data = await res.json();
-      if (data.status === "sent") {
+      if (refused(res, data)) {
+        setTestStatus("error");
+      } else if (data.status === "sent") {
         setTestStatus("sent");
         say("Test message sent!", true);
       } else {
@@ -186,10 +224,12 @@ export default function NotificationsPage() {
     try {
       const res = await fetch(
         `${apiBase}/notifications/test-sms?to=${encodeURIComponent(config.sms_to)}`,
-        { method: "POST" }
+        { method: "POST", headers: keyHeaders() }
       );
       const data = await res.json();
-      if (data.status === "sent") {
+      if (refused(res, data)) {
+        setSmsTestStatus("error");
+      } else if (data.status === "sent") {
         setSmsTestStatus("sent");
         say("Test SMS sent!", true);
       } else {
@@ -208,10 +248,12 @@ export default function NotificationsPage() {
     try {
       const res = await fetch(
         `${apiBase}/webhook/notify?url=${encodeURIComponent(config.webhook_url)}&platform=${config.webhook_platform}&top=5`,
-        { method: "POST" }
+        { method: "POST", headers: keyHeaders() }
       );
       const data = await res.json();
-      if (data.status === "sent") {
+      if (refused(res, data)) {
+        setNotifyStatus("error");
+      } else if (data.status === "sent") {
         setNotifyStatus("sent");
         say(`Sent ${data.signals_count} signals!`, true);
       } else if (data.status === "no_signals") {
@@ -554,6 +596,35 @@ export default function NotificationsPage() {
           {message}
         </div>
       )}
+
+      {/* Settings key: needed to save and to send test messages */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-2">
+        <label className="block text-xs text-zinc-500" htmlFor="settings-key">
+          Settings key (the SETTINGS_KEY value set on the server)
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="settings-key"
+            type="password"
+            autoComplete="off"
+            value={settingsKey}
+            onChange={(e) => setSettingsKey(e.target.value)}
+            placeholder="Needed to save or send test messages"
+            className="h-9 flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-200 placeholder:text-zinc-600"
+          />
+          {masked && (
+            <Button variant="outline" size="sm" className="h-9 text-xs" onClick={unlock} disabled={!settingsKey}>
+              Show saved values
+            </Button>
+          )}
+        </div>
+        {masked && (
+          <p className="text-xs text-zinc-500">
+            The saved phone number and webhook address are partly hidden. Leave them as shown to
+            keep them, type new ones to replace them, or enter the key to see them in full.
+          </p>
+        )}
+      </div>
 
       {/* Save button */}
       <Button

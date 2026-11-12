@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from src.backtest.engine import run_backtest
 from src.data import client
@@ -706,9 +706,14 @@ def portfolio():
 def test_webhook(
     url: str = Query(...),
     platform: str = Query(default="discord"),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Test a webhook URL by sending a sample message."""
+    """Test a webhook URL by sending a sample message. Needs the settings key:
+    otherwise anyone could make the server post to any address."""
     import requests as http_requests
+    _require_settings_key(x_settings_key)
+    if _is_masked(url):
+        url = load_notification_config().webhook_url
     try:
         if platform == "discord":
             payload = {
@@ -749,9 +754,13 @@ def notify_signals(
     url: str = Query(...),
     platform: str = Query(default="discord"),
     top: int = Query(default=5, ge=1, le=20),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Send current top signals to a webhook."""
+    """Send current top signals to a webhook. Needs the settings key."""
     import requests as http_requests
+    _require_settings_key(x_settings_key)
+    if _is_masked(url):
+        url = load_notification_config().webhook_url
     symbols = get_default_universe()
     all_signals = []
     bars_map = client.get_multi_bars(symbols, days=200)
@@ -836,11 +845,65 @@ def get_sms_carriers():
     return [{"key": k, "gateway": v} for k, v in CARRIER_GATEWAYS.items()]
 
 
+# --- Settings key -----------------------------------------------------------
+# These endpoints were open to anyone: reading the saved phone number,
+# switching alerts off, and making the server send texts, emails or webhook
+# posts to any address. Changing settings and sending test messages now need
+# the SETTINGS_KEY secret in the X-Settings-Key header; without the key the
+# saved phone number and webhook address are shown only partly.
+
+_MASK_DOT = "•"
+_MASK_END = "…"
+
+
+def _settings_key_check(key: str | None) -> str:
+    """"" when the key is right; otherwise why the request is refused."""
+    import hmac
+    from config.settings import settings as _s
+    configured = _s.settings_key or ""
+    if len(configured) < 16:
+        return ("Changing alert settings is locked until SETTINGS_KEY "
+                "(16+ characters) is set on the server.")
+    if not key or not hmac.compare_digest(str(key), configured):
+        return "Wrong or missing settings key."
+    return ""
+
+
+def _require_settings_key(key: str | None) -> None:
+    why = _settings_key_check(key)
+    if why:
+        raise HTTPException(status_code=403, detail=why)
+
+
+def _mask_phone(value: str) -> str:
+    digits = "".join(c for c in (value or "") if c.isdigit())
+    return f"{_MASK_DOT * 7}{digits[-2:]}" if digits else ""
+
+
+def _mask_url(value: str) -> str:
+    from urllib.parse import urlsplit
+    if not value:
+        return ""
+    parts = urlsplit(value)
+    return f"{parts.scheme}://{parts.netloc}/{_MASK_END}" if parts.netloc else _MASK_END
+
+
+def _is_masked(value: str) -> bool:
+    return _MASK_DOT in (value or "") or _MASK_END in (value or "")
+
+
 @router.get("/notifications/config")
-def get_notification_config():
-    """Get current notification configuration."""
-    config = load_notification_config()
-    return config.to_dict()
+def get_notification_config(x_settings_key: str | None = Header(default=None)):
+    """Current notification settings. The phone number and webhook address
+    are shown in full only with the settings key."""
+    data = load_notification_config().to_dict()
+    if _settings_key_check(x_settings_key):
+        data["sms_to"] = _mask_phone(data.get("sms_to", ""))
+        data["webhook_url"] = _mask_url(data.get("webhook_url", ""))
+        data["masked"] = True
+    else:
+        data["masked"] = False
+    return data
 
 
 @router.post("/notifications/config")
@@ -853,12 +916,19 @@ def set_notification_config(
     sms_consent: bool = Query(default=False),
     auto_alerts_enabled: bool = Query(default=False),
     min_confidence: float = Query(default=0.6, ge=0, le=1),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Save notification preferences."""
+    """Save notification preferences. Needs the settings key. A phone number
+    or webhook address sent back in its partly hidden form keeps the saved one."""
     from datetime import timezone
+    _require_settings_key(x_settings_key)
 
     # Record consent timestamp when user opts in
     existing = load_notification_config()
+    if _is_masked(sms_to):
+        sms_to = existing.sms_to
+    if _is_masked(webhook_url):
+        webhook_url = existing.webhook_url
     consent_ts = existing.sms_consent_timestamp
     if sms_consent and not existing.sms_consent:
         # Fresh opt-in — record the timestamp
@@ -878,16 +948,24 @@ def set_notification_config(
         min_confidence=min_confidence,
     )
     save_notification_config(config)
-    return {"status": "saved", "config": config.to_dict()}
+    saved = config.to_dict()
+    saved["sms_to"] = _mask_phone(saved["sms_to"])
+    saved["webhook_url"] = _mask_url(saved["webhook_url"])
+    return {"status": "saved", "config": saved}
 
 
 @router.post("/notifications/test-sms")
 def test_sms(
     to: str = Query(..., description="Recipient phone number, e.g. +15559876543 or 5559876543"),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Send a test SMS via the configured method (Twilio or email gateway)."""
+    """Send a test SMS via the configured method (Twilio or email gateway).
+    Needs the settings key: it sends from the owner's account."""
+    _require_settings_key(x_settings_key)
     # Verify consent before sending
     config = load_notification_config()
+    if _is_masked(to):
+        to = config.sms_to
     if not config.sms_consent:
         return {"status": "error", "message": "SMS consent not given. Please opt in first."}
 
@@ -2224,8 +2302,11 @@ def test_telegram(
     bot_token: str = Query(...),
     chat_id: str = Query(...),
     message: str = Query(default="Test from MSE"),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Test Telegram bot connection."""
+    """Test any Telegram bot (legacy; the Notifications page uses
+    /notifications/telegram/test). Needs the settings key."""
+    _require_settings_key(x_settings_key)
     ok = send_telegram(bot_token, chat_id, message)
     return {"status": "sent" if ok else "error"}
 
@@ -2272,8 +2353,10 @@ def telegram_test():
 def test_discord(
     webhook_url: str = Query(...),
     message: str = Query(default="Test from MSE"),
+    x_settings_key: str | None = Header(default=None),
 ):
-    """Test Discord webhook."""
+    """Test Discord webhook. Needs the settings key."""
+    _require_settings_key(x_settings_key)
     ok = send_discord(webhook_url, message)
     return {"status": "sent" if ok else "error"}
 
@@ -2687,8 +2770,10 @@ def weekly_digest():
 
 
 @router.post("/notifications/send-digest")
-def send_digest(to_email: str = Query(...)):
-    """Send weekly digest to an email address."""
+def send_digest(to_email: str = Query(...), x_settings_key: str | None = Header(default=None)):
+    """Send weekly digest to an email address. Needs the settings key: it
+    sends from the owner's email account."""
+    _require_settings_key(x_settings_key)
     mom_cached = _scan_cache.get("scan_20_5.0_500.0_500000")
     scan_results = mom_cached[1] if mom_cached else []
     lb_cached = _scan_cache.get("leaderboard_stats")
