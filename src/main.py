@@ -149,6 +149,7 @@ def _refresh_loop():
     from src.data.models import ScanResult
     from concurrent.futures import ThreadPoolExecutor
     from src.notifications.dispatcher import dispatch_alerts
+    from src.notifications import alert_rules
 
     from src.data.redis_store import load_seen_signals, save_seen_signals
 
@@ -240,10 +241,27 @@ def _refresh_loop():
                 except Exception as e:
                     logger.debug("Leaderboard tracking failed: %s", e)
 
-            if new_signals:
-                logger.info("Dispatching %d new signals...", len(new_signals))
+            # Alerts only while the market is open, and none that contradict an
+            # alert on the same stock from the last hour (src/notifications/
+            # alert_rules.py). Signals outside market hours are still tracked
+            # above and marked seen below; they are just not sent.
+            to_send = new_signals
+            if new_signals and not alert_rules.market_open():
+                logger.info(
+                    "Market closed: %d new signals recorded, not sent "
+                    "(alerts go out 09:30-16:00 New York time on trading days)",
+                    len(new_signals),
+                )
+                to_send = []
+            if to_send:
+                to_send, held = alert_rules.claim(to_send)
+                if held:
+                    logger.info("Held back %d signals that contradict an alert within the hour: %s",
+                                len(held), alert_rules.describe(held))
+            if to_send:
+                logger.info("Dispatching %d new signals...", len(to_send))
                 try:
-                    dispatch_results = dispatch_alerts(new_signals)
+                    dispatch_results = dispatch_alerts(to_send)
                     logger.info(
                         "Auto-dispatch result: telegram=%s, webhook=%s, sms=%s",
                         dispatch_results.get("telegram"),
@@ -251,7 +269,7 @@ def _refresh_loop():
                     )
                 except Exception as e:
                     logger.warning("Auto-dispatch failed: %s", e)
-            else:
+            elif not new_signals:
                 logger.info("No new signals to dispatch")
 
             # Record every currently-live key as seen and persist, so the next
@@ -435,7 +453,8 @@ def _intraday_scan_loop():
         save_intraday_seen,
         save_intraday_latest,
     )
-    from src.scanner.intraday_patterns import drop_conflicts, mark_sent, scan_intraday_patterns
+    from src.scanner.intraday_patterns import scan_intraday_patterns
+    from src.notifications import alert_rules
     from src.scanner.intraday_movers import scan_intraday as scan_intraday_movers
     from src.scanner import scorecard, spike_reversal
     from src.trading import auto_trader
@@ -510,17 +529,16 @@ def _intraday_scan_loop():
                 p for p in patterns
                 if f"{p.symbol}:{p.pattern_type}" not in seen_keys
             ]
-            # No buy and sell on the same stock within the hour (AMD on
-            # 2026-11-11 got a V-reversal BUY and an inverted-V SELL 7 minutes
-            # apart). Held patterns stay on the scorecard; only the alert is
-            # withheld, and they are marked seen so they do not fire later.
-            new_patterns, held = drop_conflicts(new_patterns, seen_keys, time.time())
+            # No alert that contradicts one on the same stock from the last
+            # hour, from any scanner (src/notifications/alert_rules.py). Held
+            # patterns stay on the scorecard; only the alert is withheld, and
+            # they are marked seen below so they do not fire later.
+            new_patterns, held = alert_rules.claim(new_patterns)
             if held:
                 logger.info(
-                    "Held back %d patterns that contradict one sent within the hour: %s",
-                    len(held), ", ".join(f"{p.symbol} {p.pattern_type}" for p in held),
+                    "Held back %d patterns that contradict an alert within the hour: %s",
+                    len(held), alert_rules.describe(held),
                 )
-            mark_sent(new_patterns, seen_keys, time.time())
             if new_patterns:
                 logger.info("Dispatching %d new intraday patterns", len(new_patterns))
                 try:
@@ -572,13 +590,22 @@ def _intraday_scan_loop():
                             )
                     except Exception as e:
                         logger.warning("Auto-trader failed: %s", e)
-                    try:
-                        with alert_label(delay_suffix):
-                            result = dispatch_alerts(new_setups)
+                    # The alert, not the paper trade, is held back when it
+                    # contradicts an alert on the same stock within the hour.
+                    to_alert, held = alert_rules.claim(new_setups)
+                    if held:
                         logger.info(
-                            "Movers dispatch result: telegram=%s webhook=%s sms=%s",
-                            result.get("telegram"), result.get("webhook"), result.get("sms"),
+                            "Held back %d setups that contradict an alert within the hour: %s",
+                            len(held), alert_rules.describe(held),
                         )
+                    try:
+                        if to_alert:
+                            with alert_label(delay_suffix):
+                                result = dispatch_alerts(to_alert)
+                            logger.info(
+                                "Movers dispatch result: telegram=%s webhook=%s sms=%s",
+                                result.get("telegram"), result.get("webhook"), result.get("sms"),
+                            )
                     except Exception as e:
                         logger.warning("Movers dispatch failed: %s", e)
                 seen_keys.update(

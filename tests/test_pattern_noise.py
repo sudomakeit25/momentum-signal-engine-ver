@@ -1,5 +1,6 @@
-"""Pattern alerts must not come from pre-market bars or a single stray trade,
-and a buy and a sell on the same stock within the hour are not both sent.
+"""Pattern alerts must not come from pre-market bars or a single stray trade.
+(Contradicting alerts are held back in src/notifications/alert_rules.py,
+tested in tests/test_alert_rules.py.)
 
 Regression case, from Alpaca's real 5-minute bars: on 2026-11-11 one AMD
 pre-market print at 516.50 (bar 08:25 opened near 545, closed 543.92, 20,000
@@ -180,63 +181,3 @@ class TestSessionWindow:
 
     def test_empty_input(self):
         assert ip.session_window(pd.DataFrame(), now=datetime(2026, 11, 11, 11, tzinfo=ET)).empty
-
-
-class P:
-    def __init__(self, symbol, pattern_type):
-        self.symbol, self.pattern_type = symbol, pattern_type
-
-
-class TestConflicts:
-    T0 = 1_000_000.0
-
-    def test_opposite_within_the_hour_is_held(self):
-        seen = set()
-        ip.mark_sent([P("AMD", "v_reversal")], seen, self.T0)
-        send, held = ip.drop_conflicts([P("AMD", "inverted_v")], seen, self.T0 + 7 * 60)
-        assert send == [] and [p.pattern_type for p in held] == ["inverted_v"]
-
-    def test_after_the_hour_it_is_sent(self):
-        seen = set()
-        ip.mark_sent([P("AMD", "v_reversal")], seen, self.T0)
-        send, held = ip.drop_conflicts([P("AMD", "breakdown")], seen, self.T0 + 3601)
-        assert len(send) == 1 and held == []
-
-    def test_same_direction_and_other_stocks_are_sent(self):
-        seen = set()
-        ip.mark_sent([P("AMD", "v_reversal")], seen, self.T0)
-        send, held = ip.drop_conflicts([P("AMD", "breakout"), P("NVDA", "inverted_v")], seen, self.T0 + 60)
-        assert {p.symbol for p in send} == {"AMD", "NVDA"} and held == []
-
-    def test_both_directions_in_one_batch_are_both_held(self):
-        send, held = ip.drop_conflicts([P("AMD", "v_reversal"), P("AMD", "breakdown"), P("MU", "breakout")],
-                                       set(), self.T0)
-        assert [p.symbol for p in send] == ["MU"] and len(held) == 2
-
-    def test_order_of_the_batch_does_not_matter(self):
-        a = [P("AMD", "v_reversal"), P("AMD", "breakdown")]
-        assert len(ip.drop_conflicts(a, set(), self.T0)[1]) == len(ip.drop_conflicts(a[::-1], set(), self.T0)[1]) == 2
-
-    def test_odd_keys_in_the_seen_set_are_ignored(self):
-        seen = {"AMD:v_reversal", "M:AMD:range_breakout:BUY", "T:broken", "T:AMD:up:notanumber", "T:AMD:up:1:2"}
-        send, held = ip.drop_conflicts([P("AMD", "inverted_v")], seen, self.T0)
-        assert len(send) == 1 and held == []
-
-    def test_a_mark_from_the_future_does_not_count(self):
-        seen = {f"T:AMD:up:{int(self.T0 + 600)}"}
-        assert len(ip.drop_conflicts([P("AMD", "inverted_v")], seen, self.T0)[0]) == 1
-
-    def test_empty(self):
-        assert ip.drop_conflicts([], set(), self.T0) == ([], [])
-
-    def test_directions(self):
-        assert [ip.pattern_direction(t) for t in ("v_reversal", "breakout", "inverted_v", "breakdown")] == \
-            ["up", "up", "down", "down"]
-
-
-def test_loop_holds_conflicts_before_sending():
-    import inspect
-    from src import main
-    src = inspect.getsource(main._intraday_scan_loop)
-    assert src.index("drop_conflicts(new_patterns") < src.index("dispatch_intraday_patterns(new_patterns)")
-    assert "mark_sent(new_patterns" in src

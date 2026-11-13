@@ -53,8 +53,8 @@ DEFAULT_BREAKDOWN_FOLLOWTHROUGH = 0.0  # sustained: still within 1/3 of the extr
 EXTREME_CLOSE_FRAC = 0.5
 EXTREME_NEIGHBOUR_FRAC = 0.3
 
-# Opposite patterns on the same stock within this long are not both sent.
-CONFLICT_WINDOW_SECONDS = 60 * 60
+# Contradicting alerts across all scanners are held back in
+# src/notifications/alert_rules.py.
 
 
 @dataclass
@@ -124,48 +124,6 @@ def session_window(df: pd.DataFrame, window_minutes: int = DEFAULT_WINDOW_MINUTE
 
 def pattern_direction(pattern_type: str) -> str:
     return "down" if pattern_type in ("inverted_v", "breakdown") else "up"
-
-
-def _conflict_marks(seen_keys, now_ts: float, window: float) -> dict[str, set[str]]:
-    """{symbol: directions sent within `window` seconds}, read from the
-    "T:{symbol}:{direction}:{epoch}" marks kept in the day's seen set."""
-    out: dict[str, set[str]] = {}
-    for key in seen_keys:
-        if not key.startswith("T:"):
-            continue
-        try:
-            _, sym, direction, ts = key.split(":")
-            if 0 <= now_ts - float(ts) < window:
-                out.setdefault(sym, set()).add(direction)
-        except ValueError:
-            continue
-    return out
-
-
-def drop_conflicts(patterns: list, seen_keys, now_ts: float,
-                   window: float = CONFLICT_WINDOW_SECONDS) -> tuple[list, list]:
-    """(to send, held back). A pattern is held back when a pattern in the
-    opposite direction on the same stock was sent within `window` seconds,
-    or when the batch itself holds both directions for a stock."""
-    recent = _conflict_marks(seen_keys, now_ts, window)
-    batch: dict[str, set[str]] = {}
-    for p in patterns:
-        batch.setdefault(p.symbol, set()).add(pattern_direction(p.pattern_type))
-    send, held = [], []
-    for p in patterns:
-        d = pattern_direction(p.pattern_type)
-        opposite = "down" if d == "up" else "up"
-        if opposite in recent.get(p.symbol, set()) or opposite in batch[p.symbol]:
-            held.append(p)
-        else:
-            send.append(p)
-    return send, held
-
-
-def mark_sent(patterns: list, seen_keys: set, now_ts: float) -> None:
-    """Remember the direction and time of each sent pattern for drop_conflicts."""
-    for p in patterns:
-        seen_keys.add(f"T:{p.symbol}:{pattern_direction(p.pattern_type)}:{int(now_ts)}")
 
 
 def _volume_split(df: pd.DataFrame, pivot_idx: int) -> tuple[float, float]:
