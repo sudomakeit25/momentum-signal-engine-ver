@@ -17,6 +17,7 @@ const CHANGELOG = [
       "Alert settings are locked: changing them or sending test messages needs the settings key (SETTINGS_KEY on the server); the saved phone number and webhook address are shown partly hidden and are no longer written to the server logs",
       "Fixed: intraday pattern alerts were built mostly from pre-market bars just after the open, and a single stray trade could create a fake reversal (AMD got a buy and a sell 7 minutes apart on Nov 11); patterns now use regular-session bars only and ignore one-trade highs and lows",
       "Alerts no longer contradict each other: an alert is held back when an alert in the opposite direction on the same stock went out within the hour, whether it came from a pattern, an intraday setup or a daily signal (the paper auto-trader still sees every setup)",
+      "Fixed: the paper auto-trader could send an order whose stop was already at or above the real market price, because its free quote comes from one exchange and can be a few cents off (SO on Nov 13 was refused by Alpaca); it now needs the price at least 0.1% away from the stop, and a refused order is explained in plain words",
       "Alerts go out only while the market is open (9:30 AM to 4:00 PM New York time on trading days); daily signals had been arriving after the close",
       "Fixed: when Nasdaq's earnings calendar was down, the backup check judged upcoming reports by the server's UTC clock, which is already tomorrow from 7 PM New York time",
       "Fixed: a failed text alert could stall the intraday scan for over two minutes",

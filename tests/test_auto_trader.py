@@ -424,6 +424,44 @@ class TestEvaluate:
     def test_quote_at_or_through_stop(self):
         assert _eval(quote=(98.98, 99.00)).reason == "quote is at or beyond stop/target"
 
+    def test_so_on_2026_11_13_is_skipped_before_ordering(self):
+        # Range breakout: entry 94.46, stop at the box middle 94.255, target
+        # 94.84. The single-exchange quote still showed 94.30 while the real
+        # market was at 94.24, below the stop, and Alpaca rejected the order.
+        so = _sig(symbol="SO", entry=94.46, stop=94.255, target=94.84, setup=SetupType.RANGE_BREAKOUT)
+        d = _eval(signal=so, row=_row("SO"), quote=(94.28, 94.30))
+        assert not d.trade and "too close to the stop" in d.reason
+
+    def test_amd_on_2026_11_12_still_trades(self):
+        # The one real paper trade so far: signal 582.24, stop 575.60, ordered
+        # near 578.43 (2.83 above the stop, well over 0.1% of the price). Won.
+        amd = _sig(symbol="AMD", entry=582.24, stop=575.60, target=594.00)
+        assert _eval(signal=amd, row=_row("AMD"), quote=(578.41, 578.43)).trade
+
+    @pytest.mark.parametrize("ask,trades", [(99.10, True), (99.08, False), (99.04, False), (99.60, True)])
+    def test_needs_a_tenth_of_a_percent_above_the_stop(self, ask, trades):
+        # stop 99: about 0.10 of room is needed at these prices.
+        assert _eval(quote=(ask - 0.02, ask)).trade is trades
+
+    def test_short_side_is_mirrored(self):
+        s = _sig(action=SignalAction.SELL, entry=100.0, stop=101.0, target=98.0)
+        d = _eval(signal=s, cfg=_cfg(allow_shorts=True), quote=(100.92, 100.94))
+        assert not d.trade and "too close to the stop" in d.reason
+        assert _eval(signal=s, cfg=_cfg(allow_shorts=True), quote=(100.85, 100.87)).trade
+
+    def test_zero_buffer_keeps_only_the_two_cent_rule(self):
+        assert _eval(cfg=_cfg(min_stop_buffer_pct=0.0), quote=(99.02, 99.04)).trade
+
+    @pytest.mark.parametrize("given,used", [(-1.0, 0.0), (5.0, 2.0), (float("nan"), 0.1), (0.3, 0.3)])
+    def test_buffer_setting_is_clamped(self, given, used):
+        assert _cfg(min_stop_buffer_pct=given).min_stop_buffer_pct == used
+
+    def test_buffer_setting_is_declared_and_read(self, monkeypatch):
+        from config.settings import Settings, settings
+        assert Settings.model_fields["auto_trade_min_stop_buffer_pct"].default == 0.1
+        monkeypatch.setattr(settings, "auto_trade_min_stop_buffer_pct", 0.25)
+        assert at.get_config().min_stop_buffer_pct == 0.25
+
     def test_reward_to_risk_at_quote_too_low(self):
         d = _eval(signal=_sig(target=101.5), quote=(100.22, 100.24))
         assert not d.trade and "reward:risk at quote" in d.reason
@@ -526,6 +564,23 @@ class TestHandleNewSetups:
         recs = _run(b)
         assert recs[0]["type"] == "skip" and "order rejected" in recs[0]["reason"]
         assert at.load_state().trades == []
+
+    def test_stop_past_the_market_rejection_reads_plainly(self):
+        # Alpaca's own words on 2026-11-13 for SO.
+        class Refusing(FakeBroker):
+            def submit_bracket(self, *a, **k):
+                raise RuntimeError('{"base_price":"94.24","code":42210000,'
+                                   '"message":"stop_loss.stop_price must be \\u003c= base_price - 0.01"}')
+
+        recs = _run(Refusing(quotes=Q))
+        assert recs[0]["reason"] == "order rejected: price already past the stop when ordering (broker saw 94.24)"
+
+    @pytest.mark.parametrize("err,want", [
+        ("stop_loss.stop_price must be <= base_price - 0.01", "order rejected: price already past the stop when ordering"),
+        ("insufficient buying power", "order rejected: insufficient buying power"),
+        ("x" * 500, "order rejected: " + "x" * 184)])
+    def test_rejection_reason_shapes(self, err, want):
+        assert at._rejection_reason(RuntimeError(err)) == want
 
     def test_timeout_after_accept_is_recorded_as_a_trade(self):
         b = FakeBroker(quotes=Q)

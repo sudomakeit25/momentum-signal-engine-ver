@@ -103,12 +103,23 @@ class AutoTradeConfig:
     min_confidence: float = 0.6
     max_chase_frac: float = 0.25
     min_rr_at_quote: float = 1.2
+    # The live price must be at least this percent of itself away from the
+    # stop. The quote comes from a single exchange (free plan) and can be a
+    # few cents off the real market: on 2026-11-13 it showed SO a few cents
+    # above its 94.26 stop while the market was at 94.24, and Alpaca
+    # rejected the order. A buffer tied to price, not to the setup's risk,
+    # leaves strategy alone (AMD on 2026-11-12 was 2.83 above its stop and
+    # won; a half-the-risk rule would have skipped it).
+    min_stop_buffer_pct: float = 0.1
     require_earnings_check: bool = True
     require_persistent_store: bool = True
     last_entry: dtime = dtime(15, 30)
     flatten_at: dtime = dtime(15, 45)
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.min_stop_buffer_pct):
+            self.min_stop_buffer_pct = 0.1
+        self.min_stop_buffer_pct = min(max(self.min_stop_buffer_pct, 0.0), 2.0)
         # The close must be reachable: before the bell, and not before the
         # last entry (otherwise a late entry would never be flattened).
         if not (dtime(9, 35) < self.flatten_at < SESSION_CLOSE):
@@ -151,6 +162,7 @@ def get_config() -> AutoTradeConfig:
         min_confidence=float(s.auto_trade_min_confidence),
         max_chase_frac=float(s.auto_trade_max_chase_frac),
         min_rr_at_quote=float(s.auto_trade_min_rr_at_quote),
+        min_stop_buffer_pct=float(s.auto_trade_min_stop_buffer_pct),
         require_earnings_check=bool(s.auto_trade_require_earnings_check),
         require_persistent_store=bool(s.auto_trade_require_persistent_store),
         last_entry=_parse_hhmm(s.auto_trade_last_entry_et, dtime(15, 30), "last entry"),
@@ -741,6 +753,8 @@ def evaluate(
     # Alpaca rejects a bracket whose legs are not at least a cent beyond the price
     if risk_now < 0.02 or reward_now < 0.02:
         return Decision(False, "quote is at or beyond stop/target")
+    if risk_now < ref * cfg.min_stop_buffer_pct / 100:
+        return Decision(False, f"price too close to the stop to trust the quote ({ref:.2f}, stop {stop:.2f})")
     if reward_now / risk_now < cfg.min_rr_at_quote:
         return Decision(False, f"reward:risk at quote {reward_now / risk_now:.2f} too low")
 
@@ -752,6 +766,18 @@ def evaluate(
 
 
 # ------------------------------------------------------------------ actions
+
+def _rejection_reason(e: Exception) -> str:
+    """Readable reason for a refused order. The commonest refusal, a stop on
+    the wrong side of the real market, gets the price the broker saw."""
+    text = str(e)
+    if "stop_price must be" in text:
+        import re
+        seen = re.search(r'"base_price"\s*:\s*"?([0-9.]+)', text)
+        return ("order rejected: price already past the stop when ordering"
+                + (f" (broker saw {seen.group(1)})" if seen else ""))
+    return f"order rejected: {text}"[:200]
+
 
 def _skip(state: DayState, signal: Signal, reason: str, now: datetime) -> dict:
     rec = {
@@ -891,7 +917,7 @@ def handle_new_setups(
             # deciding this was a rejection.
             if not _order_exists(broker, coid, day_start):
                 logger.warning("Auto-trader: order rejected for %s: %s", sym, e)
-                records.append(_skip(state, signal, f"order rejected: {e}"[:200], n))
+                records.append(_skip(state, signal, _rejection_reason(e), n))
                 save_state(state)
                 continue
             logger.warning("Auto-trader: submit errored but order exists for %s", sym)
