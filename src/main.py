@@ -658,6 +658,19 @@ def _intraday_scan_loop():
                     logger.info("Spike watch: %d events", len(spikes["events"]))
             except Exception as e:
                 logger.warning("Spike watch failed: %s", e)
+
+            # --- Peer groups moving together at 10:30: measured, not alerted ---
+            # (src/scanner/group_moves.py). Fetches nothing outside 10:30-11:30.
+            try:
+                from src.scanner import group_moves
+                if not heavy.should_skip("group moves"):
+                    moved = heavy.run("group moves", group_moves.scan)
+                    if moved:
+                        _score(scorecard, moved)
+                        logger.info("Group moves: %s", ", ".join(
+                            f"{m['symbol']} {m['move_pct']:+.1f}%" for m in moved))
+            except Exception as e:
+                logger.warning("Group move check failed: %s", e)
         except Exception as e:
             logger.warning("Intraday loop iteration failed: %s", e)
 
