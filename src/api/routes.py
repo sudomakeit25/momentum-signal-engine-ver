@@ -87,6 +87,17 @@ def recent_performance_route(
     return rp.recent_performance(sym, sessions, rp.parse_peers(peers, sym) or None)
 
 
+@router.get("/probability-map/{symbol}")
+def probability_map_route(symbol: str):
+    """How often the stock has traded through levels 5-30% either side of
+    its last close within 1, 5, 10 and 20 sessions, scaled to its current
+    volatility; the odds of a 10% close next session (redone from the open
+    once it is known); and a walk-forward check of how accurate those odds
+    were over the last 500 sessions. Past frequencies, not a forecast."""
+    from src.scanner import probability_map as pm
+    return pm.probability_map(symbol)
+
+
 @router.get("/scanner/catalyst-watch")
 def scanner_catalyst_watch(
     days_ahead: int = Query(default=5, ge=1, le=10),
