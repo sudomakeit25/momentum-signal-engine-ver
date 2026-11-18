@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     intraday_min_rr: float = 1.5              # checklist: risk/reward at least 1:1.5
     intraday_box_bars: int = 8                # 8 x 5min = 40 min consolidation box
     intraday_top_n: int = 25
+    # Add today's most active stocks (Alpaca's free screener, by number of
+    # trades) to the movers screen's universe, on top of the watchlist and
+    # the daily scan's top names. The screen's own filters still apply.
+    intraday_include_most_active: bool = True
+    intraday_most_active_top: int = 100       # 1-100 (Alpaca's limit)
     # Forming-setup watches (alert before the trigger, with levels)
     intraday_box_min_day_range_mult: float = 2.2  # box must follow a real move
     intraday_watch_box_atr_frac: float = 0.12     # watch box height <= this share of ATR%

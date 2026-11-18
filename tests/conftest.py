@@ -31,6 +31,15 @@ def mse_logs(caplog):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_most_actives(monkeypatch):
+    """The movers screen adds Alpaca's most-active list; no test may fetch
+    it for real. Tests of that list replace _fetch themselves."""
+    from src.data import most_actives
+    monkeypatch.setattr(most_actives, "_fetch", lambda top: [])
+    monkeypatch.setattr(most_actives, "_cache", {"at": 0.0, "symbols": [], "failed_at": 0.0})
+
+
+@pytest.fixture(autouse=True)
 def _no_real_telegram(monkeypatch):
     from config.settings import settings
     from src.notifications import dispatcher

@@ -481,8 +481,11 @@ def scan_intraday(
     min_rvol: float | None = None,
     check_spread: bool = True,
     now: datetime | None = None,
+    include_most_active: bool | None = None,
 ) -> list[IntradayResult]:
-    """Run the intraday movers screen. Returns ranked IntradayResult rows."""
+    """Run the intraday movers screen. Returns ranked IntradayResult rows.
+    The universe is `symbols` (or the default list) plus, unless switched
+    off, today's most active stocks (src/data/most_actives.py)."""
     top_n = top_n or settings.intraday_top_n
     min_price = min_price if min_price is not None else settings.intraday_min_price
     min_avg_volume = min_avg_volume or settings.intraday_min_avg_volume
@@ -492,6 +495,14 @@ def scan_intraday(
     min_rvol = min_rvol if min_rvol is not None else settings.intraday_min_rvol
 
     universe = _intraday_universe(symbols)
+    if include_most_active is None:
+        include_most_active = settings.intraday_include_most_active
+    if include_most_active:
+        from src.data.most_actives import most_active
+        extra = [s for s in most_active() if s not in set(universe)]
+        universe = universe + extra
+        logger.info("Movers universe: %d symbols (%d added from the most-active list)",
+                    len(universe), len(extra))
     if not universe:
         return []
 
