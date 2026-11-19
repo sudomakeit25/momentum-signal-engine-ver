@@ -89,7 +89,7 @@ class TestWindow:
     def test_reversed_window_falls_back_to_defaults(self, monkeypatch):
         monkeypatch.setattr(ka.settings, "keep_alive_start_et", "16:15")
         monkeypatch.setattr(ka.settings, "keep_alive_end_et", "04:00")
-        assert ka.window() == (dtime(4, 0), dtime(16, 15))
+        assert ka.window() == (ka.DEFAULT_START, ka.DEFAULT_END) == (dtime(4, 0), dtime(16, 45))
         assert ka.in_window(_utc(2026, 11, 10, 15)) is True
 
     def test_zero_length_window_falls_back_to_defaults(self, monkeypatch):

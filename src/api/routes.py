@@ -98,6 +98,15 @@ def probability_map_route(symbol: str):
     return pm.probability_map(symbol)
 
 
+@router.get("/probability-map-record")
+def probability_map_record_route():
+    """The probability map's live record: every tracked stock's table saved
+    after each session and scored once its windows finished, pooled and for
+    CLSK, RIOT, MARA, NVDA, AVGO and TSLA."""
+    from src.scanner import map_record
+    return map_record.report()
+
+
 @router.get("/scanner/catalyst-watch")
 def scanner_catalyst_watch(
     days_ahead: int = Query(default=5, ge=1, le=10),

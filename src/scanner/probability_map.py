@@ -40,6 +40,9 @@ import pandas as pd
 logger = logging.getLogger("mse.probability_map")
 
 ET = ZoneInfo("America/New_York")
+# Raise when the method or its settings change, so the live record
+# (src/scanner/map_record.py) scores each version separately.
+METHOD_VERSION = 1
 LEVELS = (5.0, 10.0, 20.0, 30.0)         # percent from the last close, both ways
 HORIZONS = (1, 5, 10, 20)                # sessions
 BIG_DAY_PCT = 10.0
@@ -453,11 +456,22 @@ def _build_symbol(sym: str, base: dict, now: datetime | None) -> dict:
                    "in_progress": in_progress}
             if out["data_ok"]:
                 out["earnings"] = _earnings(sym, date.fromisoformat(out["as_of"]))
+                out["live"] = _live(sym)
     except Exception as e:
         logger.warning("Probability map failed for %s: %s", sym, str(e)[:160])
         return {**base, "note": "Could not build the map right now."}     # not cached: retried next time
     _cache_put(sym, out)
     return out
+
+
+def _live(sym: str) -> dict | None:
+    """The stock's live record (forecasts saved daily and scored later)."""
+    try:
+        from src.scanner import map_record
+        return map_record.live_for(sym)
+    except Exception as e:
+        logger.warning("Map record lookup failed for %s: %s", sym, str(e)[:120])
+        return None
 
 
 def _earnings(sym: str, last: date) -> dict:

@@ -27,7 +27,7 @@ logger = logging.getLogger("mse.keepalive")
 
 ET = ZoneInfo("America/New_York")
 DEFAULT_START = dtime(4, 0)
-DEFAULT_END = dtime(16, 15)
+DEFAULT_END = dtime(16, 45)
 MIN_INTERVAL = 60
 MAX_INTERVAL = 780          # the host sleeps at 15 minutes; stay under it
 RETRY_AFTER = 60            # a failed request is retried sooner

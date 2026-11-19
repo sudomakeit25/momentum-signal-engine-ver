@@ -46,3 +46,22 @@ def _no_real_telegram(monkeypatch):
     monkeypatch.setattr(settings, "telegram_bot_token", "")
     monkeypatch.setattr(settings, "telegram_chat_id", "")
     monkeypatch.setattr(dispatcher, "_tg_pending", [])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_redis(monkeypatch):
+    """A local .env may hold the production Upstash address; no test may
+    read or write it. Code then uses its in-memory fallbacks."""
+    from config.settings import settings
+    monkeypatch.setattr(settings, "upstash_redis_rest_url", "")
+    monkeypatch.setattr(settings, "upstash_redis_rest_token", "")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_map_record(monkeypatch):
+    """The probability map's live record keeps module state; start each test clean."""
+    from src.scanner import map_record
+    monkeypatch.setattr(map_record, "_mem", {})
+    monkeypatch.setattr(map_record, "_failed_at", 0.0)
+    monkeypatch.setattr(map_record, "_done_for", None)
+    monkeypatch.setattr(map_record, "_report_cache", None)

@@ -1,11 +1,14 @@
 "use client";
 
-import { useProbabilityMap, type MapCheck, type ProbabilityMapOk } from "@/hooks/use-probability-map";
+import {
+  useProbabilityMap, type LiveRecord, type MapCheck, type ProbabilityMapOk,
+} from "@/hooks/use-probability-map";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { fullDate, skillText, verdictTone } from "@/lib/map-format";
 
 function odds(p: number | null | undefined): string {
   if (p == null) return "--";
@@ -24,24 +27,8 @@ function day(iso: string): string {
   });
 }
 
-function fullDate(iso: string): string {
-  return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, {
-    month: "short", day: "numeric", year: "numeric",
-  });
-}
 
-function skillText(s: number | null | undefined): string {
-  if (s == null) return "";
-  const v = Math.abs(s * 100).toFixed(1);
-  return s >= 0 ? `error ${v}% lower than its usual odds` : `error ${v}% higher than its usual odds`;
-}
 
-function verdictTone(v: string | null | undefined): string {
-  if (!v) return "text-zinc-400";
-  if (v.startsWith("more")) return "text-emerald-400";
-  if (v.startsWith("less")) return "text-amber-400";
-  return "text-zinc-300";
-}
 
 // Cell shading: stronger for higher odds; green above the price, red below.
 function shade(p: number | null, up: boolean): React.CSSProperties {
@@ -207,6 +194,46 @@ function Check({ c, symbol }: { c: MapCheck; symbol: string }) {
   );
 }
 
+function Live({ live, symbol }: { live: LiveRecord | null; symbol: string }) {
+  if (!live) {
+    return (
+      <p className="text-xs text-zinc-500">
+        Live record: starts after the next close. Each evening the server saves this table and scores it once the
+        sessions it covers have finished.
+      </p>
+    );
+  }
+  if (live.days == null) {
+    return (
+      <p className="text-xs text-zinc-500">
+        {symbol} is not in the daily live record (it covers the screener&apos;s stocks and the crypto miners).
+      </p>
+    );
+  }
+  const one = live.days["1"] ?? 0;
+  const twenty = live.days["20"] ?? 0;
+  return (
+    <p className="text-xs text-zinc-400">
+      <span className="font-medium text-zinc-300">Live record</span> since {fullDate(live.since)}: {one}{" "}
+      {one === 1 ? "session" : "sessions"} scored for the next session, {twenty} for 20 sessions.{" "}
+      {live.verdict ? (
+        <>
+          So far <span className={verdictTone(live.verdict)}>{live.verdict}</span> ({skillText(live.skill)}).
+        </>
+      ) : (
+        <>Too early to judge: a verdict needs {live.min_days} scored sessions.</>
+      )}{" "}
+      {live.next.days > 0 && (
+        <>
+          {live.next.happened === 0
+            ? "No closes of 10% or more so far."
+            : `${live.next.happened} ${live.next.happened === 1 ? "close" : "closes"} of 10% or more so far.`}
+        </>
+      )}
+    </p>
+  );
+}
+
 export function ProbabilityMapPanel({ symbol }: { symbol: string }) {
   const { data, isLoading, isError } = useProbabilityMap(symbol);
   const maxH = data?.data_ok ? Math.max(...data.horizons) : 20;
@@ -247,6 +274,8 @@ export function ProbabilityMapPanel({ symbol }: { symbol: string }) {
           )}
 
           {data.calibration && <Check c={data.calibration} symbol={data.symbol} />}
+
+          <Live live={data.live} symbol={data.symbol} />
 
           <p className="text-xs text-zinc-500">
             Shares of past sessions, scaled to current volatility. Reaching a level means trading at or beyond it

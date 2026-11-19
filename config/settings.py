@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     keep_alive_enabled: bool = True
     keep_alive_url: str = ""                 # blank = RENDER_EXTERNAL_URL (set by Render); no address = off
     keep_alive_start_et: str = "04:00"       # pre-market data starts at 4:00
-    keep_alive_end_et: str = "16:15"         # after the close and the 15:45 auto-trader flatten
+    keep_alive_end_et: str = "16:45"         # after the close, the 15:45 auto-trader flatten and the map record (about 16:25-16:40)
     keep_alive_interval_seconds: int = 300   # the host sleeps after 15 idle minutes
 
     # Pre-load the Stock Screener page's Yahoo Finance data at startup and on

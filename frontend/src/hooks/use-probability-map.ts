@@ -39,6 +39,39 @@ export interface MapCheck {
   };
 }
 
+export interface LiveWindow {
+  sessions: number;
+  days: number;
+  cells: number;
+  skill: number | null;
+}
+
+// Totals from forecasts saved after each close and scored once their windows finished.
+export interface LiveSummary {
+  days: Record<string, number>;
+  cells: number;
+  skill: number | null;
+  skill_10: number | null;
+  verdict: string | null;
+  by_window: LiveWindow[];
+  bins: MapBin[];
+  next: {
+    days: number;
+    open_days: number;
+    happened: number;
+    skill: number | null;
+    verdict: string | null;
+    open_skill: number | null;
+    open_verdict: string | null;
+  };
+  min_days: number;
+}
+
+// One stock's live record; days is null when the stock is not in the daily record.
+export type LiveRecord =
+  | ({ since: string; last_saved: string } & LiveSummary)
+  | { since: string; last_saved: string; days: null };
+
 export interface ProbabilityMapOk {
   symbol: string;
   data_ok: true;
@@ -71,6 +104,7 @@ export interface ProbabilityMapOk {
   calibration: MapCheck | null;
   earnings: { known: boolean; date: string | null; sessions_away: number | null };
   in_progress: boolean;
+  live: LiveRecord | null;
 }
 
 export type ProbabilityMap = ProbabilityMapOk | { symbol: string; data_ok: false; note: string };

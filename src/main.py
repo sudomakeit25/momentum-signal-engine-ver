@@ -417,6 +417,20 @@ def _refresh_loop():
         except Exception as e:
             logger.warning("Background refresh failed: %s", e)
 
+        # Probability map live record (src/scanner/map_record.py), outside the
+        # scan's try so a failed scan cannot skip it: save the last finished
+        # session's tables and score earlier ones. The "anything to do?" check
+        # runs outside the heavy-step lock; a failed run writes nothing and is
+        # retried after 30 minutes.
+        try:
+            from src.scanner import map_record
+            if map_record.due() and map_record.needs_work() and not heavy.should_skip("map record"):
+                done = heavy.run("map record", map_record.run_daily)
+                if done:
+                    logger.info("Map record: %s", done)
+        except Exception as e:
+            logger.warning("Map record failed: %s", str(e)[:200])
+
         _stop_event.wait(_REFRESH_INTERVAL)
 
 

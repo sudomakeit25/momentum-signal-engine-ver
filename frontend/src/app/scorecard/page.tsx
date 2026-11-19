@@ -14,6 +14,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { MapRecordSection } from "@/components/scorecard/map-record-section";
 
 const HORIZONS = ["m15", "h1", "eod", "d1", "d5"] as const;
 const MIN_SAMPLE = 20;
@@ -183,6 +184,8 @@ export default function ScorecardPage() {
           </Table>
         </>
       ) : null}
+
+      <MapRecordSection />
 
       <div className="rounded-lg border bg-zinc-900/40 p-3 text-xs text-zinc-500">
         Each alert is logged once per symbol, type and day, at the price when it first
