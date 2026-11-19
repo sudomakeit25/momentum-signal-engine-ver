@@ -293,6 +293,11 @@ class TestReading:
         assert mr.live_for("CLSK") is None
         assert mr.report()["since"] is None
 
+    def test_after_the_first_save_the_tracked_stocks_are_counted(self, market):
+        run(I0)
+        rep = mr.report()
+        assert rep["sessions_saved"] == 1 and rep["stocks"] == 3 and rep["stocks_scored"] == 0
+
     def test_report_and_verdict_thresholds(self, market, monkeypatch):
         for i in range(I0, I0 + 8):
             run(i)

@@ -11,6 +11,7 @@ export interface MapRecordReport {
   last_saved?: string;
   sessions_saved?: number;
   stocks?: number;
+  stocks_scored?: number;
   updated?: string;
   waiting?: string[];
   pooled?: LiveSummary;

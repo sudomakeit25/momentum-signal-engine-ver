@@ -59,7 +59,8 @@ export function MapRecordSection() {
       ) : (
         <>
           <p className="text-xs text-zinc-400">
-            Since {fullDate(data.since)}: {data.sessions_saved} sessions saved for {data.stocks} stocks, last on{" "}
+            Since {fullDate(data.since)}: {data.sessions_saved} {data.sessions_saved === 1 ? "session" : "sessions"} saved
+            for {data.stocks} {data.stocks === 1 ? "stock" : "stocks"}, last on{" "}
             {data.last_saved ? fullDate(data.last_saved) : "--"}. All stocks together:{" "}
             <PooledVerdict s={data.pooled} />.
           </p>

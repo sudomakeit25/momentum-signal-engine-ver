@@ -481,7 +481,9 @@ def report() -> dict:
         stocks = score["symbols"]
         pooled = summarize(_sum(list(stocks.values())), MIN_DAYS_POOLED, dict(score["days"]))
         out = {"ok": True, "since": score["since"], "last_saved": score["last_snap"],
-               "sessions_saved": score["snapshots"], "stocks": len(stocks), "updated": score["updated"],
+               "sessions_saved": score["snapshots"], "updated": score["updated"],
+               # stocks in the latest save; stocks_scored have at least one window scored
+               "stocks": len(score.get("tracked") or stocks), "stocks_scored": len(stocks),
                "waiting": sorted(score["open"]),
                "pooled": pooled,
                "focus": [{"symbol": s, **summarize(stocks[s], MIN_DAYS_STOCK)} for s in FOCUS if s in stocks]}
