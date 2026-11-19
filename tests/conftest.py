@@ -65,3 +65,30 @@ def _fresh_map_record(monkeypatch):
     monkeypatch.setattr(map_record, "_failed_at", 0.0)
     monkeypatch.setattr(map_record, "_done_for", None)
     monkeypatch.setattr(map_record, "_report_cache", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sms(monkeypatch, tmp_path):
+    """A local .env may hold real Gmail, Twilio or Brevo credentials, and
+    .notification_config.json the owner's phone number; no test may text
+    anyone. Tests of the SMS path set fakes themselves."""
+    from config.settings import settings
+    from src.notifications import dispatcher
+    for name in ("smtp_email", "smtp_password", "twilio_account_sid", "twilio_auth_token",
+                 "twilio_from_number", "brevo_api_key", "brevo_sender_email"):
+        monkeypatch.setattr(settings, name, "")
+    monkeypatch.setattr(dispatcher, "_CONFIG_PATH", tmp_path / "no_notification_config.json")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_map_alerts(monkeypatch):
+    """The probability map alerts keep module state; start each test clean."""
+    from src.notifications import map_alerts
+    monkeypatch.setattr(map_alerts, "_mem", {})
+    monkeypatch.setattr(map_alerts, "_digest_done_for", None)
+    monkeypatch.setattr(map_alerts, "_open_done", {})
+    monkeypatch.setattr(map_alerts, "_closes", {})
+    # No calendar lookups over the network in tests: a normal 16:00 close
+    # unless a test sets its own.
+    from datetime import time as _t
+    monkeypatch.setattr(map_alerts, "session_close", lambda day: _t(16, 0))

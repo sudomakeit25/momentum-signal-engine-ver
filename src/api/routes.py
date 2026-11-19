@@ -98,6 +98,39 @@ def probability_map_route(symbol: str):
     return pm.probability_map(symbol)
 
 
+@router.get("/alerts/levels")
+def alert_levels():
+    """Price levels set for probability-map alerts, waiting or already hit."""
+    from src.notifications import map_alerts
+    return map_alerts.list_levels()
+
+
+@router.post("/alerts/levels")
+def add_alert_level(
+    symbol: str = Query(..., min_length=1, max_length=12),
+    price: float = Query(..., gt=0),
+    x_settings_key: str | None = Header(default=None),
+):
+    """Add a price level: Telegram and SMS the first time the stock trades
+    there in regular hours, with the probability map's odds. Needs the
+    settings key."""
+    _require_settings_key(x_settings_key)
+    from src.notifications import map_alerts
+    return map_alerts.add_level(symbol, price)
+
+
+@router.delete("/alerts/levels")
+def delete_alert_level(
+    symbol: str = Query(..., min_length=1, max_length=12),
+    price: float = Query(..., gt=0),
+    x_settings_key: str | None = Header(default=None),
+):
+    """Remove a price level. Needs the settings key."""
+    _require_settings_key(x_settings_key)
+    from src.notifications import map_alerts
+    return map_alerts.remove_level(symbol, price)
+
+
 @router.get("/probability-map-record")
 def probability_map_record_route():
     """The probability map's live record: every tracked stock's table saved

@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useProbabilityMap, type LiveRecord, type MapCheck, type ProbabilityMapOk,
+  useProbabilityMap, useProbabilityMapGaveUp, type LiveRecord, type MapCheck, type ProbabilityMapOk,
 } from "@/hooks/use-probability-map";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { fullDate, skillText, verdictTone } from "@/lib/map-format";
+import Link from "next/link";
+import { useAlertLevels } from "@/hooks/use-alert-levels";
 
 function odds(p: number | null | undefined): string {
   if (p == null) return "--";
@@ -234,8 +236,32 @@ function Live({ live, symbol }: { live: LiveRecord | null; symbol: string }) {
   );
 }
 
+function Levels({ symbol }: { symbol: string }) {
+  const { data } = useAlertLevels();
+  const mine = (data?.levels ?? []).filter((l) => l.symbol === symbol);
+  return (
+    <p className="text-xs text-zinc-500">
+      Price alerts:{" "}
+      {mine.length === 0 ? (
+        <>none for {symbol}.</>
+      ) : (
+        mine.map((l, i) => (
+          <span key={l.price} className={l.hit ? "text-emerald-400" : "text-zinc-300"}>
+            {i > 0 && ", "}${l.price.toFixed(2)} {l.hit ? "reached" : "waiting"}
+          </span>
+        ))
+      )}{" "}
+      <Link href="/notifications" className="text-cyan-400 hover:underline">
+        Set alerts on the Notifications page
+      </Link>
+      .
+    </p>
+  );
+}
+
 export function ProbabilityMapPanel({ symbol }: { symbol: string }) {
   const { data, isLoading, isError } = useProbabilityMap(symbol);
+  const gaveUp = useProbabilityMapGaveUp(symbol);
   const maxH = data?.data_ok ? Math.max(...data.horizons) : 20;
 
   return (
@@ -251,8 +277,17 @@ export function ProbabilityMapPanel({ symbol }: { symbol: string }) {
         <Skeleton className="h-64 w-full bg-zinc-800" />
       ) : isError || !data ? (
         <p className="text-sm text-red-400">Could not load the probability map.</p>
+      ) : !data.data_ok && data.retry && !gaveUp ? (
+        <div className="space-y-2">
+          <Skeleton className="h-64 w-full bg-zinc-800" />
+          <p className="text-xs text-zinc-500">
+            Building the map; this can take a moment while the server catches up. It loads here on its own.
+          </p>
+        </div>
       ) : !data.data_ok ? (
-        <p className="text-sm text-zinc-500">{data.note}</p>
+        <p className="text-sm text-zinc-500">
+          {data.retry ? "The map could not be built right now. Reload the page to try again." : data.note}
+        </p>
       ) : (
         <>
           <Tiles d={data} />
@@ -276,6 +311,7 @@ export function ProbabilityMapPanel({ symbol }: { symbol: string }) {
           {data.calibration && <Check c={data.calibration} symbol={data.symbol} />}
 
           <Live live={data.live} symbol={data.symbol} />
+          <Levels symbol={data.symbol} />
 
           <p className="text-xs text-zinc-500">
             Shares of past sessions, scaled to current volatility. Reaching a level means trading at or beyond it

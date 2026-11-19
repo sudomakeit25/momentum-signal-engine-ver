@@ -431,6 +431,17 @@ def _refresh_loop():
         except Exception as e:
             logger.warning("Map record failed: %s", str(e)[:200])
 
+        # Probability map evening digest and volatility-shift alerts
+        # (src/notifications/map_alerts.py): once per finished session.
+        try:
+            from src.notifications import map_alerts
+            if map_alerts.evening_due() and not heavy.should_skip("map digest"):
+                sent = heavy.run("map digest", map_alerts.evening)
+                if sent:
+                    logger.info("Map alerts: %s", sent)
+        except Exception as e:
+            logger.warning("Map digest failed: %s", str(e)[:200])
+
         _stop_event.wait(_REFRESH_INTERVAL)
 
 
@@ -685,6 +696,16 @@ def _intraday_scan_loop():
                             f"{m['symbol']} {m['move_pct']:+.1f}%" for m in moved))
             except Exception as e:
                 logger.warning("Group move check failed: %s", e)
+
+            # Probability map big-open alert, 9:45-10:30, once per stock per day.
+            try:
+                from src.notifications import map_alerts
+                if map_alerts.open_due() and not heavy.should_skip("open odds alerts"):
+                    sent = heavy.run("open odds alerts", map_alerts.open_tick)
+                    if sent:
+                        logger.info("Big-open alerts: %s", ", ".join(sent))
+            except Exception as e:
+                logger.warning("Big-open alert check failed: %s", e)
         except Exception as e:
             logger.warning("Intraday loop iteration failed: %s", e)
 
@@ -745,6 +766,9 @@ async def lifespan(app: FastAPI):
     # Telegram status: restart notice at startup, morning check before the open
     from src.notifications import heartbeat
     threading.Thread(target=heartbeat.run, args=(_stop_event,), daemon=True).start()
+    # Probability map price-level alerts: every minute in regular hours
+    from src.notifications import map_alerts
+    threading.Thread(target=map_alerts.run_levels, args=(_stop_event,), daemon=True).start()
     yield
     _stop_event.set()
 

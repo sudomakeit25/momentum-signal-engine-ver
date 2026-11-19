@@ -5,6 +5,7 @@ import { Bell, Send, Check, AlertCircle, MessageSquare, Smartphone, Zap, Mail } 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { PriceAlertsCard } from "@/components/notifications/price-alerts-card";
 
 interface NotificationConfig {
   webhook_url: string;
@@ -385,6 +386,8 @@ export default function NotificationsPage() {
           {tgTestStatus === "sending" ? "Sending..." : "Send test message"}
         </Button>
       </div>
+
+      <PriceAlertsCard apiBase={apiBase} keyHeaders={keyHeaders} say={say} refused={refused} />
 
       {/* Webhook config */}
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-4">

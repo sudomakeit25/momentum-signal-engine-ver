@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     # Email-to-SMS gateway (free alternative to Twilio)
     smtp_email: str = ""  # e.g. "yourname@gmail.com"
     smtp_password: str = ""  # Gmail app password (not your login password)
+    # Email-to-SMS over HTTPS, for hosts that block outbound email ports
+    # (Render's free plan). When BREVO_API_KEY is set, gateway texts go
+    # through Brevo's transactional email API instead of SMTP. The sender
+    # must be verified in Brevo; blank uses SMTP_EMAIL.
+    brevo_api_key: str = ""
+    brevo_sender_email: str = ""
+
+    # Probability map alerts (src/notifications/map_alerts.py): evening
+    # digest, price levels, big-open and volatility-shift alerts, sent to
+    # Telegram and SMS when auto alerts are on (Notifications page).
+    map_alerts_enabled: bool = True
+    map_alert_symbols: str = ""          # extra tickers besides CLSK, RIOT, MARA, NVDA, AVGO, TSLA
+    map_open_alert_ratio: float = 2.0    # 10%-close odds from the open at least this many times usual
+    map_vol_shift_ratio: float = 1.5     # moving this many times its usual (or 1/x as much)
 
     # Upstash Redis (persistent config storage)
     upstash_redis_rest_url: str = ""

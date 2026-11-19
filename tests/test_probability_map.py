@@ -274,7 +274,8 @@ class TestProbabilityMap:
 
         monkeypatch.setattr(client, "get_multi_bars", boom)
         out = pm.probability_map("CLSK")
-        assert out == {"symbol": "CLSK", "data_ok": False, "note": "Could not build the map right now."}
+        assert out == {"symbol": "CLSK", "data_ok": False, "note": "Could not build the map right now.",
+                       "retry": True}
         assert pm._cache == {}                                     # failures are not cached
 
     def test_no_history(self, monkeypatch):
@@ -476,3 +477,72 @@ class TestServing:
         app.include_router(router)
         r = TestClient(app).get("/probability-map/AB%24")
         assert r.status_code == 200 and r.json() == {"symbol": "AB$", "data_ok": False, "note": "Not a stock symbol."}
+
+
+class TestBusy:
+    @pytest.fixture
+    def slow_feed(self, monkeypatch):
+        import threading
+        bars = walk(np.full(800, 0.04), seed=61)
+        from src.data import client, fmp_client
+        gate = threading.Event()
+        calls = []
+
+        def fake(symbols, days=200, **kw):
+            calls.append(tuple(symbols))
+            gate.wait(5)                                  # a slow download
+            return {s: bars.copy() for s in symbols}
+
+        monkeypatch.setattr(client, "get_multi_bars", fake)
+        monkeypatch.setattr(fmp_client, "get_symbol_next_earnings", lambda s, today=None: (False, None))
+        monkeypatch.setattr(pm, "calibrate", lambda p, sessions=0: None)
+        return gate, calls
+
+    def test_a_slow_download_does_not_block_another_stock(self, monkeypatch):
+        import threading
+        bars = walk(np.full(800, 0.04), seed=62)
+        from src.data import client, fmp_client
+        stalled = threading.Event()
+
+        def fake(symbols, days=200, **kw):
+            if "AAA" in symbols:
+                stalled.wait(10)                          # AAA's download hangs
+            return {s: bars.copy() for s in symbols}
+
+        monkeypatch.setattr(client, "get_multi_bars", fake)
+        monkeypatch.setattr(fmp_client, "get_symbol_next_earnings", lambda s, today=None: (False, None))
+        monkeypatch.setattr(pm, "calibrate", lambda p, sessions=0: None)
+        monkeypatch.setattr(pm, "BUILD_WAIT", 1)
+        first = threading.Thread(target=pm.probability_map, args=("AAA",))
+        first.start()
+        try:
+            out = pm.probability_map("BBB")               # while AAA is still downloading
+            assert out["data_ok"] and first.is_alive()
+        finally:
+            stalled.set()
+            first.join()
+
+    def test_same_stock_waits_for_the_running_build(self, slow_feed):
+        import threading
+        gate, calls = slow_feed
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(pm.probability_map("CCC"))) for _ in range(4)]
+        for th in threads:
+            th.start()
+        gate.set()
+        for th in threads:
+            th.join()
+        assert calls == [("CCC",)] and all(r["data_ok"] for r in results)
+
+    def test_busy_calculation_slot_is_temporary_and_not_cached(self, slow_feed, monkeypatch):
+        gate, _ = slow_feed
+        gate.set()
+        monkeypatch.setattr(pm, "BUILD_WAIT", 0.2)
+        assert pm._cpu_slot.acquire(timeout=1)            # someone else is calculating
+        try:
+            out = pm.probability_map("DDD")
+        finally:
+            pm._cpu_slot.release()
+        assert out == {"symbol": "DDD", "data_ok": False, "note": pm.BUSY, "retry": True}
+        assert "DDD" not in pm._cache
+        assert pm.probability_map("DDD")["data_ok"]       # and the next request builds it

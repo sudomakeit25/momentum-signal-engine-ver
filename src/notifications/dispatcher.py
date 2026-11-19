@@ -419,6 +419,8 @@ def _send_text_sms(config, body: str) -> bool:
         gateway = CARRIER_GATEWAYS.get(config.sms_carrier)
         if len(digits) != 10 or not gateway:
             return False
+        if _settings.brevo_api_key:
+            return _send_email_https(f"{digits}@{gateway}", body)
         if not _settings.smtp_email or not _settings.smtp_password:
             return False
         msg = MIMEText(body)
@@ -443,6 +445,71 @@ def _send_text_sms(config, body: str) -> bool:
         )
         return True
     return False
+
+
+_BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+
+
+def _send_email_https(to_addr: str, body: str) -> bool:
+    """Send a carrier-gateway text through Brevo's transactional email API
+    (HTTPS), for hosts that block outbound email ports. The API key is sent
+    only in its header and never logged. Never raises."""
+    from config.settings import settings as _settings
+    sender = _settings.brevo_sender_email or _settings.smtp_email
+    if not _settings.brevo_api_key or not sender:
+        return False
+    try:
+        resp = http_requests.post(
+            _BREVO_URL,
+            headers={"api-key": _settings.brevo_api_key, "accept": "application/json",
+                     "content-type": "application/json"},
+            json={"sender": {"name": "MSE", "email": sender}, "to": [{"email": to_addr}],
+                  "subject": "MSE", "textContent": body},
+            timeout=15,
+        )
+    except Exception as e:
+        logger.warning("Email-to-text via Brevo failed: %s", type(e).__name__)
+        return False
+    if 200 <= resp.status_code < 300:
+        return True
+    detail = (resp.text or "")[:160].replace(_settings.brevo_api_key, "[key]")
+    logger.warning("Email-to-text via Brevo refused: HTTP %d %s", resp.status_code, detail)
+    return False
+
+
+MAP_SMS_MAX = 155     # carrier gateways cut longer texts
+MAP_SMS_PER_ALERT = 3
+
+
+def dispatch_map_alert(kind: str, telegram_body: str, sms_bodies: list[str]) -> dict:
+    """Send one probability-map alert: the full text to Telegram, and up to
+    MAP_SMS_PER_ALERT short texts by SMS. Follows the Notifications page's
+    auto-alert switch and SMS consent, and MAP_ALERTS_ENABLED; repeats of
+    the same text within 30 minutes are dropped. Never raises."""
+    from config.settings import settings as _settings
+    results = {"telegram": False, "sms": 0}
+    try:
+        if not _settings.map_alerts_enabled:
+            return results
+        config = load_config()
+        if not config.auto_alerts_enabled:
+            logger.info("Auto alerts are off; map %s alert not sent", kind)
+            return results
+        results["telegram"] = _send_telegram(f"map_{kind}", telegram_body)
+        if config.sms_to and config.sms_consent:
+            for body in [b[:MAP_SMS_MAX] for b in sms_bodies if b][:MAP_SMS_PER_ALERT]:
+                fp = _fingerprint_of_body(f"map_sms:{kind}:{body}")
+                if fp in _recent_sms_fingerprints():
+                    continue
+                try:
+                    if _send_text_sms(config, body):
+                        _record_sms_fingerprint(fp)
+                        results["sms"] += 1
+                except Exception as e:
+                    logger.warning("Map %s SMS failed: %s", kind, type(e).__name__)
+    except Exception as e:
+        logger.warning("Map %s alert failed: %s", kind, type(e).__name__)
+    return results
 
 
 def dispatch_intraday_watches(watches: list) -> dict:

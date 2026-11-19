@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
 export interface MapRow {
@@ -107,7 +107,10 @@ export interface ProbabilityMapOk {
   live: LiveRecord | null;
 }
 
-export type ProbabilityMap = ProbabilityMapOk | { symbol: string; data_ok: false; note: string };
+// retry: the server was busy or a download failed; worth asking again shortly.
+export type ProbabilityMap =
+  | ProbabilityMapOk
+  | { symbol: string; data_ok: false; note: string; retry?: boolean };
 
 export function useProbabilityMap(symbol: string) {
   return useQuery({
@@ -116,5 +119,20 @@ export function useProbabilityMap(symbol: string) {
     enabled: !!symbol,
     // The server caches a good answer for 10 minutes; a failed one is retried sooner.
     staleTime: (query) => (query.state.data?.data_ok === false ? 30 * 1000 : 10 * 60 * 1000),
+    // A busy or failed build is temporary: ask again every 5 seconds for the
+    // first minute, then every 30 seconds for about five more, then stop.
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d || d.data_ok || !d.retry || query.state.dataUpdateCount > MAX_TRIES) return false;
+      return query.state.dataUpdateCount <= 12 ? 5000 : 30000;
+    },
   });
+}
+
+export const MAX_TRIES = 22;
+
+// True once the panel has stopped asking again for a map that kept failing.
+export function useProbabilityMapGaveUp(symbol: string): boolean {
+  const tries = useQueryClient().getQueryState(["probability-map", symbol])?.dataUpdateCount ?? 0;
+  return tries > MAX_TRIES;
 }

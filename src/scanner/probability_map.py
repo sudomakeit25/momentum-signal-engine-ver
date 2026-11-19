@@ -66,11 +66,22 @@ _TTL = 10 * 60
 _CACHE_MAX = 64         # served by a public endpoint, so the cache is bounded
 _cache: dict[str, tuple[float, dict]] = {}
 _cache_lock = threading.Lock()   # the route runs in a thread pool
-# One map is built at a time: a build is a few hundred milliseconds of CPU on
-# a public endpoint, and requests for the same stock that arrive together then
-# share one build instead of each fetching.
-_build_slot = threading.BoundedSemaphore(1)
-BUILD_WAIT = 30         # seconds a request waits for the build slot
+# Requests for the same stock that arrive together share one build. The
+# calculation (CPU, about a second on the host) runs one at a time; fetching
+# prices and the earnings date do not hold that slot, so a slow download for
+# one stock does not stall the others.
+_cpu_slot = threading.BoundedSemaphore(1)
+_inflight: dict[str, threading.Event] = {}
+_inflight_lock = threading.Lock()
+BUILD_WAIT = 90         # seconds a request waits for the slot or for the same stock's build
+BUSY = "Busy building other maps; trying again shortly."
+# Page requests come before background work (the 9:45 big-open check builds
+# several maps in a row): a background build takes the calculation slot only
+# while no page request is waiting for it, and otherwise leaves the stock
+# for its next pass.
+_page_waiting = 0
+_page_lock = threading.Lock()
+_BACKGROUND_POLL = 0.25
 SESSION_OPEN = dtime(9, 30)
 _SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
 
@@ -216,6 +227,42 @@ def open_odds_at(p: dict, t: int, open_price: float) -> dict | None:
     up, cases = _share(zoc, [(_BIG_UP - g) / sig_t])
     dn, _ = _share(zoc, [(_BIG_DN - g) / sig_t], below=True)
     return {"up": float(up[0]), "down": float(dn[0]), "gap_pct": (math.exp(g) - 1) * 100, "cases": cases}
+
+
+def level_odds(p: dict, t: int, price: float) -> dict | None:
+    """The grid's odds for any price: the chance of trading at or beyond it
+    within each horizon from the close of session t, and, of the past
+    sessions that reached it within 5 sessions, the share still at or beyond
+    it at the 5th close. None for the close itself or too little history."""
+    sig_t = p["sig"][t] if 0 <= t < len(p["sig"]) else np.nan
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(sig_t) or not math.isfinite(price) or price <= 0:
+        return None
+    lvl = math.log(price / p["close"][t])
+    if lvl == 0:
+        return None
+    end = t - max(HORIZONS) + 1
+    if end <= 0:
+        return None
+    ok = np.isfinite(p["sig"][:end])
+    up = lvl > 0
+    thr = lvl / sig_t
+    within, cases = {}, 0
+    for h in HORIZONS:
+        z = p["z"][h]
+        share, cases = _share(z["zup" if up else "zdn"][:end][ok], [thr], below=not up)
+        within[h] = float(share[0])
+    if cases < MIN_ORIGINS:
+        return None
+    z5 = p["z"][5]
+    touched = (z5["zup"][:end][ok] >= thr) if up else (z5["zdn"][:end][ok] <= thr)
+    held = (z5["zcl"][:end][ok] >= thr) if up else (z5["zcl"][:end][ok] <= thr)
+    n = int(touched.sum())
+    return {"pct": (math.exp(lvl) - 1) * 100, "within": within,
+            "held5": float((touched & held).sum() / n) if n else None, "touches": n}
 
 
 # ---------------------------------------------------------------- walk-forward check
@@ -416,26 +463,71 @@ def _cache_put(sym: str, out: dict) -> None:
         _cache[sym] = (time.time(), out)
 
 
-def probability_map(symbol: str, now: datetime | None = None) -> dict:
+def probability_map(symbol: str, now: datetime | None = None, background: bool = False) -> dict:
     """The map for one symbol. Never raises: data_ok False with a note when
-    it cannot be built."""
+    it cannot be built ("retry": True when asking again shortly may work).
+    `background` callers give way to page requests. A request waits at most
+    BUILD_WAIT in all (plus its own downloads)."""
     sym = (symbol or "").strip().upper()
     base = {"symbol": sym, "data_ok": False}
     if not _SYMBOL.match(sym):
         return {**base, "note": "Not a stock symbol."}
-    hit = _cache_get(sym)
-    if hit is not None:
-        return hit
-    if not _build_slot.acquire(timeout=BUILD_WAIT):
-        return {**base, "note": "Busy building other maps; try again in a moment."}
+    deadline = time.time() + BUILD_WAIT
+    for _ in range(2):
+        hit = _cache_get(sym)
+        if hit is not None:
+            return hit
+        with _inflight_lock:
+            running = _inflight.get(sym)
+            mine = running is None
+            if mine:
+                running = _inflight[sym] = threading.Event()
+        if mine:
+            try:
+                return _build_symbol(sym, base, now, background, deadline)
+            finally:
+                with _inflight_lock:
+                    _inflight.pop(sym, None)
+                running.set()
+        if background:
+            return _busy(base, "the same stock is already being built")
+        running.wait(max(0.0, deadline - time.time()))   # the same stock is being built: wait, then
+                                            # build it here if that build gave up
+    return _busy(base, "the same stock's build did not finish")
+
+
+def _busy(base: dict, why: str) -> dict:
+    logger.info("Probability map for %s not built: %s", base["symbol"], why)
+    return {**base, "note": BUSY, "retry": True}                       # not cached
+
+
+def _take_slot(background: bool, deadline: float) -> bool:
+    """The calculation slot. A page request waits until `deadline`; a
+    background build takes it only while no page request is waiting."""
+    global _page_waiting
+    if background:
+        while time.time() < deadline:
+            with _page_lock:
+                if _page_waiting:
+                    return False
+            if _cpu_slot.acquire(timeout=_BACKGROUND_POLL):
+                with _page_lock:
+                    if not _page_waiting:
+                        return True
+                _cpu_slot.release()                 # a page request arrived meanwhile
+                return False
+        return False
+    with _page_lock:
+        _page_waiting += 1
     try:
-        hit = _cache_get(sym)               # built while this request waited
-        return hit if hit is not None else _build_symbol(sym, base, now)
+        return _cpu_slot.acquire(timeout=max(0.0, deadline - time.time()))
     finally:
-        _build_slot.release()
+        with _page_lock:
+            _page_waiting -= 1
 
 
-def _build_symbol(sym: str, base: dict, now: datetime | None) -> dict:
+def _build_symbol(sym: str, base: dict, now: datetime | None, background: bool = False,
+                  deadline: float | None = None) -> dict:
     try:
         from src.data import client
         from src.scanner.recent_performance import _in_progress
@@ -452,14 +544,20 @@ def _build_symbol(sym: str, base: dict, now: datetime | None) -> dict:
                 if o is not None and now_et.time() >= SESSION_OPEN and row["low"] <= o <= row["high"]:
                     today_open = o
                 d = d.iloc[:-1]
-            out = {"symbol": sym, **build(d, today_open, now_et.date() if in_progress else None),
-                   "in_progress": in_progress}
+            if not _take_slot(background, deadline if deadline is not None else time.time() + BUILD_WAIT):
+                return _busy(base, "left for later: a page request needs the slot" if background
+                             else f"waited {BUILD_WAIT:g}s for the calculation slot")
+            try:
+                out = {"symbol": sym, **build(d, today_open, now_et.date() if in_progress else None),
+                       "in_progress": in_progress}
+            finally:
+                _cpu_slot.release()
             if out["data_ok"]:
                 out["earnings"] = _earnings(sym, date.fromisoformat(out["as_of"]))
                 out["live"] = _live(sym)
     except Exception as e:
         logger.warning("Probability map failed for %s: %s", sym, str(e)[:160])
-        return {**base, "note": "Could not build the map right now."}     # not cached: retried next time
+        return {**base, "note": "Could not build the map right now.", "retry": True}   # not cached
     _cache_put(sym, out)
     return out
 
